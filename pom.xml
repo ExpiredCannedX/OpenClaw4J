@@ -6,41 +6,86 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>3.5.13</version>
-        <relativePath/> <!-- lookup parent from repository -->
+        <relativePath/>
     </parent>
     <groupId>com.quashy</groupId>
     <artifactId>OpenClaw4J</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>OpenClaw4J</name>
     <description>OpenClaw4J</description>
-    <url/>
-    <licenses>
-        <license/>
-    </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
+
+    <!-- Spring AI 3.x BOM 统一版本管理（适配Spring Boot 3.5.x） -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>1.1.2</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <properties>
         <java.version>25</java.version>
     </properties>
+
     <dependencies>
+        <!-- 必须加Web依赖，否则无法写接口调用AI -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- 测试依赖 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Spring AI Alibaba Agent（你保留的依赖，兼容） -->
+        <dependency>
+            <groupId>com.alibaba.cloud.ai</groupId>
+            <artifactId>spring-ai-alibaba-agent-framework</artifactId>
+            <version>1.1.2.0</version>
+        </dependency>
+
+        <!-- Spring AI 3.x OpenAI  -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- 流式响应（可选，需要就打开） -->
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.boot</groupId>-->
+<!--            <artifactId>spring-boot-starter-webflux</artifactId>-->
+<!--        </dependency>-->
     </dependencies>
+
+    <!-- 必须加Spring官方仓库，否则拉不到AI依赖 -->
+    <repositories>
+        <repository>
+            <id>spring-release</id>
+            <name>Spring Release Repository</name>
+            <url>https://repo.spring.io/release</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones Repository</name>
+            <url>https://repo.spring.io/milestone</url>
+        </repository>
+    </repositories>
 
     <build>
         <plugins>

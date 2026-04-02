@@ -1,0 +1,13 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: OpenClaw4J
+  ai:
+    openai:
+      base-url: http://127.0.0.1:3000
+      api-key: sk-krzuXY1HELkOTPNlStkwswr2egw4YMzs2BozgfD5O2ITXjoY
+      chat:
+        options:
+          model: qwen3-235b-a22b-thinking-2507
