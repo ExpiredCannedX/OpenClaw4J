@@ -1,7 +1,9 @@
 # single-dm-channel Specification
 
 ## Purpose
-TBD - created by archiving change add-single-dm-core. Update Purpose after archive.
+定义单聊消息的渠道接入边界，负责接收外部消息、完成标准化、身份映射、
+活跃会话复用与幂等处理，并把请求转交给统一 Agent 入口，但不负责具体
+模型推理与上下文组装。
 ## Requirements
 ### Requirement: System accepts normalized direct-message ingress
 The system SHALL provide one development-facing direct-message ingress that accepts single-user messages and normalizes them into the internal message model before invoking the agent.
@@ -27,4 +29,3 @@ The system SHALL detect duplicate delivery of the same external message and avoi
 #### Scenario: Duplicate message delivery is ignored
 - **WHEN** the same external message identifier is delivered more than once
 - **THEN** the system processes it at most once and returns the previously computed result or a duplicate-safe response
-

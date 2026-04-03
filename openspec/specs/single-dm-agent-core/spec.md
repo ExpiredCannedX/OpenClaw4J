@@ -1,7 +1,9 @@
 # single-dm-agent-core Specification
 
 ## Purpose
-TBD - created by archiving change add-single-dm-core. Update Purpose after archive.
+定义单聊场景下统一的 Agent 核心执行入口，负责基于 workspace 和活跃
+会话组装上下文、调用模型并生成最终一次性结构化回复，但不负责渠道协
+议适配、Skill 自动匹配或 Tool 调用编排。
 ## Requirements
 ### Requirement: System exposes a unified agent entrypoint
 The system SHALL provide a single internal agent entrypoint that accepts a normalized direct-message request and returns a structured reply.
@@ -30,4 +32,3 @@ The system SHALL return a safe fallback reply when model invocation fails or tim
 #### Scenario: Model failure triggers fallback
 - **WHEN** the language model call throws an exception or exceeds the configured timeout
 - **THEN** the system returns a fallback `ReplyEnvelope` instead of propagating the raw failure to the caller
-
