@@ -6,11 +6,15 @@
 模型推理与上下文组装。
 ## Requirements
 ### Requirement: System accepts normalized direct-message ingress
-The system SHALL provide one development-facing direct-message ingress that accepts single-user messages and normalizes them into the internal message model before invoking the agent.
+The system SHALL provide both a development-facing direct-message ingress and one or more real channel adapters that accept single-user messages and normalize them into the internal message model before invoking the agent.
 
-#### Scenario: Direct message reaches the agent
+#### Scenario: Direct message reaches the agent through development ingress
 - **WHEN** a caller submits a valid direct-message request to the development ingress
 - **THEN** the system normalizes the request into the internal message model and forwards it to the unified agent entrypoint
+
+#### Scenario: Direct message reaches the agent through a real adapter
+- **WHEN** a supported real channel adapter receives a valid direct-message event from an external platform
+- **THEN** the system normalizes the platform payload into the internal message model and forwards it to the unified agent entrypoint
 
 ### Requirement: System maintains external-to-internal identity mappings
 The system SHALL map channel-native user identifiers and conversation identifiers to platform-agnostic internal identifiers.
@@ -29,3 +33,4 @@ The system SHALL detect duplicate delivery of the same external message and avoi
 #### Scenario: Duplicate message delivery is ignored
 - **WHEN** the same external message identifier is delivered more than once
 - **THEN** the system processes it at most once and returns the previously computed result or a duplicate-safe response
+
