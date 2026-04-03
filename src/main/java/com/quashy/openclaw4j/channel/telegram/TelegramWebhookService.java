@@ -1,6 +1,7 @@
 package com.quashy.openclaw4j.channel.telegram;
 
 import com.quashy.openclaw4j.channel.dm.DirectMessageIngressCommand;
+import com.quashy.openclaw4j.channel.dm.DirectMessageHandleResult;
 import com.quashy.openclaw4j.channel.dm.DirectMessageService;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
 import org.slf4j.Logger;
@@ -48,13 +49,18 @@ public class TelegramWebhookService {
             log.debug("忽略不受支持的 Telegram update: updateId={}", update != null ? update.updateId() : null);
             return;
         }
-        ReplyEnvelope replyEnvelope = directMessageService.handle(new DirectMessageIngressCommand(
+        DirectMessageHandleResult handleResult = directMessageService.handleWithMetadata(new DirectMessageIngressCommand(
                 "telegram",
                 inboundMessage.externalUserId(),
                 inboundMessage.externalConversationId(),
                 inboundMessage.externalMessageId(),
                 inboundMessage.body()
         ));
+        if (!handleResult.newlyProcessed()) {
+            log.debug("忽略重复 Telegram update 的重复发送: updateId={}, chatId={}", inboundMessage.externalMessageId(), inboundMessage.chatId());
+            return;
+        }
+        ReplyEnvelope replyEnvelope = handleResult.replyEnvelope();
         try {
             telegramOutboundClient.sendMessage(new TelegramOutboundMessage(inboundMessage.chatId(), replyEnvelope.body()));
         } catch (RuntimeException exception) {

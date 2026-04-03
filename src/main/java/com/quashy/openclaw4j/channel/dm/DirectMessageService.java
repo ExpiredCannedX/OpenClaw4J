@@ -11,7 +11,11 @@ import com.quashy.openclaw4j.repository.IdentityMappingRepository;
 import com.quashy.openclaw4j.repository.ProcessedMessageRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 编排统一单聊 ingress 的身份映射、活跃会话复用和消息幂等逻辑，让各渠道 adapter 只负责协议翻译。
@@ -40,6 +44,11 @@ public class DirectMessageService {
     private final AgentFacade agentFacade;
 
     /**
+     * 记录正在处理中但尚未落入最终幂等缓存的消息结果，防止 webhook 并发重投把同一条消息送入 Agent 两次。
+     */
+    private final Map<String, CompletableFuture<ReplyEnvelope>> inFlightReplies = new ConcurrentHashMap<>();
+
+    /**
      * 通过仓储接口组合当前单聊主链路的最小依赖，避免控制器直接管理内部身份和幂等状态。
      */
     public DirectMessageService(
@@ -58,10 +67,40 @@ public class DirectMessageService {
      * 处理一条已经标准化的单聊入站命令；若命中重复投递则直接返回旧结果，否则完成身份映射与 Agent 调用后再记录幂等结果。
      */
     public ReplyEnvelope handle(DirectMessageIngressCommand request) {
+        return handleWithMetadata(request).replyEnvelope();
+    }
+
+    /**
+     * 在返回统一回复的同时暴露“是否首次处理成功”的元信息，供 Telegram 等渠道在重复 webhook 投递时避免再次发送旧结果。
+     */
+    public DirectMessageHandleResult handleWithMetadata(DirectMessageIngressCommand request) {
         Optional<ReplyEnvelope> existingReply = processedMessageRepository.findProcessedReply(request.channel(), request.externalMessageId());
         if (existingReply.isPresent()) {
-            return existingReply.get();
+            return new DirectMessageHandleResult(existingReply.get(), false);
         }
+        String messageKey = buildMessageKey(request.channel(), request.externalMessageId());
+        CompletableFuture<ReplyEnvelope> newInFlightReply = new CompletableFuture<>();
+        CompletableFuture<ReplyEnvelope> existingInFlightReply = inFlightReplies.putIfAbsent(messageKey, newInFlightReply);
+        if (existingInFlightReply != null) {
+            return new DirectMessageHandleResult(awaitInFlightReply(existingInFlightReply), false);
+        }
+        try {
+            ReplyEnvelope replyEnvelope = processNewMessage(request);
+            processedMessageRepository.saveProcessedReply(request.channel(), request.externalMessageId(), replyEnvelope);
+            newInFlightReply.complete(replyEnvelope);
+            return new DirectMessageHandleResult(replyEnvelope, true);
+        } catch (RuntimeException exception) {
+            newInFlightReply.completeExceptionally(exception);
+            throw exception;
+        } finally {
+            inFlightReplies.remove(messageKey, newInFlightReply);
+        }
+    }
+
+    /**
+     * 真正执行首次消息处理流程，只在确认当前消息不属于已完成或进行中的重复投递后才调用 Agent。
+     */
+    private ReplyEnvelope processNewMessage(DirectMessageIngressCommand request) {
         NormalizedDirectMessage message = new NormalizedDirectMessage(
                 request.channel(),
                 request.externalUserId(),
@@ -71,8 +110,27 @@ public class DirectMessageService {
         );
         InternalUserId userId = identityMappingRepository.getOrCreateInternalUserId(request.channel(), request.externalUserId());
         InternalConversationId conversationId = activeConversationRepository.getOrCreateActiveConversation(request.channel(), request.externalUserId());
-        ReplyEnvelope replyEnvelope = agentFacade.reply(new AgentRequest(userId, conversationId, message));
-        processedMessageRepository.saveProcessedReply(request.channel(), request.externalMessageId(), replyEnvelope);
-        return replyEnvelope;
+        return agentFacade.reply(new AgentRequest(userId, conversationId, message));
+    }
+
+    /**
+     * 等待同一消息的首个处理中请求完成，并把其成功或失败结果透明传递给后续重复投递。
+     */
+    private ReplyEnvelope awaitInFlightReply(CompletableFuture<ReplyEnvelope> inFlightReply) {
+        try {
+            return inFlightReply.join();
+        } catch (CompletionException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw exception;
+        }
+    }
+
+    /**
+     * 统一生成渠道级消息幂等键，避免各处自行拼接导致重复投递判定口径不一致。
+     */
+    private String buildMessageKey(String channel, String externalMessageId) {
+        return channel + "::" + externalMessageId;
     }
 }

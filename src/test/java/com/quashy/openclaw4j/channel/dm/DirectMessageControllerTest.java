@@ -4,6 +4,8 @@ import com.quashy.openclaw4j.agent.AgentPromptAssembler;
 import com.quashy.openclaw4j.agent.AgentModelClient;
 import com.quashy.openclaw4j.agent.DefaultAgentFacade;
 import com.quashy.openclaw4j.config.OpenClawProperties;
+import com.quashy.openclaw4j.skill.SkillMarkdownParser;
+import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
@@ -33,8 +35,19 @@ class DirectMessageControllerTest {
     @Test
     void shouldHandleDirectMessageRequest(@TempDir Path workspaceRoot) throws Exception {
         Files.writeString(workspaceRoot.resolve("SOUL.md"), "保持专业");
+        Files.writeString(workspaceRoot.resolve("SKILLS.md"), "优先使用本地 Skill");
         Files.writeString(workspaceRoot.resolve("USER.md"), "称呼用户为伙伴");
         Files.writeString(workspaceRoot.resolve("MEMORY.md"), "记住近期问题");
+        Path skillDirectory = Files.createDirectories(workspaceRoot.resolve("skills").resolve("code-review"));
+        Files.writeString(skillDirectory.resolve("SKILL.md"), """
+                ---
+                name: code-review
+                description: 审查风险
+                keywords:
+                  - code-review
+                ---
+                先看风险，再给建议。
+                """);
         OpenClawProperties properties = new OpenClawProperties(
                 workspaceRoot.toString(),
                 6,
@@ -50,6 +63,7 @@ class DirectMessageControllerTest {
                 new DefaultAgentFacade(
                         new FileWorkspaceLoader(properties),
                         new AgentPromptAssembler(),
+                        new SkillResolver(new SkillMarkdownParser()),
                         new InMemoryConversationTurnRepository(),
                         modelClient,
                         properties
@@ -65,11 +79,14 @@ class DirectMessageControllerTest {
                                   "externalUserId": "user-1",
                                   "externalConversationId": "dm-1",
                                   "externalMessageId": "msg-1",
-                                  "body": "你好"
+                                  "body": "请使用 $code-review 帮我看看这个改动"
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.body").value("已收到：true"))
-                .andExpect(jsonPath("$.signals").isArray());
+                .andExpect(jsonPath("$.body").value("已收到：false"))
+                .andExpect(jsonPath("$.signals").isArray())
+                .andExpect(jsonPath("$.signals[0].type").value("skill_applied"))
+                .andExpect(jsonPath("$.signals[0].payload.skill_name").value("code-review"))
+                .andExpect(jsonPath("$.signals[0].payload.activation_mode").value("explicit"));
     }
 }

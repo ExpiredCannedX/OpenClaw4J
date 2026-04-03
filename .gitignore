@@ -21,6 +21,9 @@ logs/
 hs_err_pid*
 replay_pid*
 
+# Local workspace runtime data
+workspace/
+
 # Local environment files
 .env
 .env.*

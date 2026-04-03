@@ -96,7 +96,7 @@ class TelegramWebhookServiceTest {
     }
 
     /**
-     * 相同 `update_id` 的重复投递必须复用统一 ingress 的幂等能力，避免重复触发 Agent 计算。
+     * 相同 `update_id` 的重复投递必须既避免重复触发 Agent 计算，也避免把同一条回复重复发送给 Telegram 用户。
      */
     @Test
     void shouldReuseUpdateIdAsIdempotencyKeyAcrossDuplicateWebhookDeliveries() {
@@ -126,5 +126,6 @@ class TelegramWebhookServiceTest {
         service.handle(update);
 
         verify(agentFacade, times(1)).reply(any());
+        verify(telegramOutboundClient, times(1)).sendMessage(new TelegramOutboundMessage(2001L, "已收到"));
     }
 }

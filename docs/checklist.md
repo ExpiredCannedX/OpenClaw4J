@@ -89,6 +89,13 @@
 - Skill 自动激活后必须产生结构化 `skill_applied` signal。
 - 同一 Skill 在同一会话中连续命中默认只提示一次。
 - Skill 变化时必须重新提示。
+- 后续版本应支持渐进式 Skill 加载机制，以降低上下文膨胀风险并提升 Skill 数量扩展能力。
+- 渐进式 Skill 加载至少分为三层：
+- 启动注入层（Discovery）：启动时仅向模型暴露 Skill 目录摘要，例如 `name`、`description` 与必要关键词，不默认注入完整 Skill 正文。
+- 任务匹配层（Activation）：当模型或系统判断当前任务需要某个 Skill 时，再激活目标 Skill 并加载详细指令层内容。
+- 执行支撑层（Execution）：仅在实际执行需要时，再加载 Skill 的附属资源、模板、工具权限或扩展上下文，避免一次性注入全部内容。
+- 渐进式加载场景下，Skill 目录、激活结果和执行期附加加载都必须保留 provenance 与可解释记录。
+- 渐进式 Skill 加载属于 V2+ 演进方向，不替代 V1 当前的显式指定与关键词/规则匹配主流程。
 
 ### 5. Tool System
 - 统一 Tool API：
@@ -224,6 +231,9 @@
 ### P2：像 OpenClaw 的版本
 - 第二个渠道 adapter。
 - 完整 workspace 文件体系。
+- Skill Catalog 与渐进式加载基础设施：
+- 启动注入层目录构建。
+- Skill 激活协议与二阶段加载。
 - 混合检索：
 - FTS5
 - sqlite-vec
@@ -236,6 +246,9 @@
 - 更强的工具编排。
 - 多 Agent 协作。
 - `AGENTS.md` 驱动的委派策略。
+- Skill 执行支撑层增强：
+- 执行期资源懒加载。
+- Skill 级工具权限与附加上下文控制。
 - 更成熟的 profile / persona 演进。
 - 更完整的部署和运维能力。
 

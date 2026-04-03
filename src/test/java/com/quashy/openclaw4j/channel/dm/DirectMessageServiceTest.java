@@ -10,6 +10,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,6 +72,54 @@ class DirectMessageServiceTest {
         ReplyEnvelope secondReply = service.handle(new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-1", "你好"));
 
         assertThat(secondReply).isEqualTo(firstReply);
+        verify(agentFacade, times(1)).reply(any());
+    }
+
+    /**
+     * 同一外部消息并发重投时也必须只触发一次 Agent 调用，否则 webhook 重试会把同一条消息处理成两次不同回复。
+     */
+    @Test
+    void shouldProcessConcurrentDuplicateMessageOnlyOnce() throws Exception {
+        AgentFacade agentFacade = mock(AgentFacade.class);
+        ReplyEnvelope replyEnvelope = new ReplyEnvelope("第一次回复", List.of());
+        CountDownLatch firstInvocationStarted = new CountDownLatch(1);
+        CountDownLatch allowInvocationToFinish = new CountDownLatch(1);
+        AtomicInteger invocationCount = new AtomicInteger();
+        when(agentFacade.reply(any())).thenAnswer(invocation -> {
+            int currentInvocationCount = invocationCount.incrementAndGet();
+            if (currentInvocationCount == 1) {
+                firstInvocationStarted.countDown();
+            }
+            if (!allowInvocationToFinish.await(2, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("等待测试放行超时");
+            }
+            return replyEnvelope;
+        });
+        DirectMessageService service = new DirectMessageService(
+                new InMemoryIdentityMappingRepository(),
+                new InMemoryActiveConversationRepository(),
+                new InMemoryProcessedMessageRepository(),
+                agentFacade
+        );
+        DirectMessageIngressCommand command = new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-1", "你好");
+        ExecutorService executorService = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<ReplyEnvelope> firstReply = executorService.submit(() -> service.handle(command));
+            assertThat(firstInvocationStarted.await(2, TimeUnit.SECONDS)).isTrue();
+            Future<ReplyEnvelope> secondReply = executorService.submit(() -> service.handle(command));
+
+            Thread.sleep(150);
+
+            assertThat(invocationCount.get()).isEqualTo(1);
+            allowInvocationToFinish.countDown();
+            assertThat(firstReply.get(2, TimeUnit.SECONDS)).isEqualTo(replyEnvelope);
+            assertThat(secondReply.get(2, TimeUnit.SECONDS)).isEqualTo(replyEnvelope);
+        } finally {
+            allowInvocationToFinish.countDown();
+            executorService.shutdownNow();
+        }
+
         verify(agentFacade, times(1)).reply(any());
     }
 }

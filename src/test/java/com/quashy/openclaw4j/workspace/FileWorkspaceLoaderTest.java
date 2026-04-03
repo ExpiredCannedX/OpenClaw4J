@@ -16,13 +16,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class FileWorkspaceLoaderTest {
 
     /**
-     * 当核心文件存在时，加载器必须把 SOUL 归类为静态规则，并把 USER 与 MEMORY 归类为动态记忆。
+     * 当核心文件和本地 Skill 文档都存在时，加载器必须稳定区分静态规则、动态记忆和本地 Skill 来源。
      */
     @Test
-    void shouldLoadStaticAndDynamicWorkspaceFiles(@TempDir Path workspaceRoot) throws IOException {
+    void shouldLoadWorkspaceFilesAndLocalSkills(@TempDir Path workspaceRoot) throws IOException {
         Files.writeString(workspaceRoot.resolve("SOUL.md"), "保持克制");
+        Files.writeString(workspaceRoot.resolve("SKILLS.md"), "需要时选择本地 Skill");
         Files.writeString(workspaceRoot.resolve("USER.md"), "用户偏好");
         Files.writeString(workspaceRoot.resolve("MEMORY.md"), "长期记忆");
+        Path firstSkillDirectory = Files.createDirectories(workspaceRoot.resolve("skills").resolve("a-review"));
+        Path secondSkillDirectory = Files.createDirectories(workspaceRoot.resolve("skills").resolve("z-refactor"));
+        Files.writeString(firstSkillDirectory.resolve("SKILL.md"), "review skill");
+        Files.writeString(secondSkillDirectory.resolve("SKILL.md"), "refactor skill");
         FileWorkspaceLoader loader = new FileWorkspaceLoader(new OpenClawProperties(
                 workspaceRoot.toString(),
                 6,
@@ -33,18 +38,28 @@ class FileWorkspaceLoaderTest {
 
         WorkspaceSnapshot snapshot = loader.load();
 
-        assertThat(snapshot.staticRules().fileName()).isEqualTo("SOUL.md");
-        assertThat(snapshot.staticRules().content()).isEqualTo("保持克制");
+        assertThat(snapshot.staticRules())
+                .extracting(WorkspaceFileContent::fileName, WorkspaceFileContent::content)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("SOUL.md", "保持克制"),
+                        org.assertj.core.groups.Tuple.tuple("SKILLS.md", "需要时选择本地 Skill")
+                );
         assertThat(snapshot.dynamicMemories())
                 .extracting(WorkspaceFileContent::fileName, WorkspaceFileContent::content)
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("USER.md", "用户偏好"),
                         org.assertj.core.groups.Tuple.tuple("MEMORY.md", "长期记忆")
                 );
+        assertThat(snapshot.localSkillDocuments())
+                .extracting(LocalSkillDocument::relativePath, LocalSkillDocument::content)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("skills/a-review/SKILL.md", "review skill"),
+                        org.assertj.core.groups.Tuple.tuple("skills/z-refactor/SKILL.md", "refactor skill")
+                );
     }
 
     /**
-     * 当可选动态文件缺失时，加载器必须回退为空内容，而不是让一次请求因为本地文件尚未初始化而失败。
+     * 当可选文件和本地 Skill 目录缺失时，加载器必须回退为空内容或空集合，而不是让一次请求失败。
      */
     @Test
     void shouldFallbackToEmptyContentWhenWorkspaceFilesAreMissing(@TempDir Path workspaceRoot) throws IOException {
@@ -59,9 +74,12 @@ class FileWorkspaceLoaderTest {
 
         WorkspaceSnapshot snapshot = loader.load();
 
-        assertThat(snapshot.staticRules().content()).isEqualTo("仅有规则");
+        assertThat(snapshot.staticRules())
+                .extracting(WorkspaceFileContent::content)
+                .containsExactly("仅有规则", "");
         assertThat(snapshot.dynamicMemories())
                 .extracting(WorkspaceFileContent::content)
                 .containsExactly("", "");
+        assertThat(snapshot.localSkillDocuments()).isEmpty();
     }
 }
