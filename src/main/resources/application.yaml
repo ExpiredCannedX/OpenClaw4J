@@ -1,18 +1,28 @@
-server:
-  port: 8088
-
 spring:
+  config:
+    import: optional:file:./.env[.properties]
   application:
     name: OpenClaw4J
   ai:
     openai:
-      base-url: http://127.0.0.1:3000
-      api-key: sk-krzuXY1HELkOTPNlStkwswr2egw4YMzs2BozgfD5O2ITXjoY
+      base-url: ${openai.base-url:${OPENAI_BASE_URL:http://127.0.0.1:3000}}
+      api-key: ${openai.api-key:${OPENAI_API_KEY:}}
       chat:
         options:
-          model: qwen3-235b-a22b-thinking-2507
+          model: ${openai.chat.model:${OPENAI_CHAT_MODEL:qwen3-235b-a22b-thinking-2507}}
+
+server:
+  port: ${SERVER_PORT:8088}
 
 openclaw:
-  workspace-root: ./workspace
-  recent-turn-limit: 6
-  fallback-reply: 系统暂时繁忙，请稍后再试。
+  workspace-root: ${OPENCLAW_WORKSPACE_ROOT:./workspace}
+  recent-turn-limit: ${OPENCLAW_RECENT_TURN_LIMIT:6}
+  fallback-reply: ${OPENCLAW_FALLBACK_REPLY:系统暂时繁忙，请稍后再试。}
+  debug:
+    default-prompt: ${OPENCLAW_DEBUG_DEFAULT_PROMPT:你好，介绍下你自己！}
+  telegram:
+    enabled: ${OPENCLAW_TELEGRAM_ENABLED:false}
+    bot-token: ${telegram.bot-token:${TELEGRAM_BOT_TOKEN:}}
+    webhook-secret: ${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}
+    webhook-path: ${telegram.webhook-path:${TELEGRAM_WEBHOOK_PATH:/api/telegram/webhook}}
+    webhook-url: ${telegram.webhook-url:${TELEGRAM_WEBHOOK_URL:}}

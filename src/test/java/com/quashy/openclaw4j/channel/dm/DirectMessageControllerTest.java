@@ -35,7 +35,13 @@ class DirectMessageControllerTest {
         Files.writeString(workspaceRoot.resolve("SOUL.md"), "保持专业");
         Files.writeString(workspaceRoot.resolve("USER.md"), "称呼用户为伙伴");
         Files.writeString(workspaceRoot.resolve("MEMORY.md"), "记住近期问题");
-        OpenClawProperties properties = new OpenClawProperties(workspaceRoot.toString(), 6, "fallback");
+        OpenClawProperties properties = new OpenClawProperties(
+                workspaceRoot.toString(),
+                6,
+                "fallback",
+                new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+        );
         AgentModelClient modelClient = prompt -> "已收到：" + prompt.content().contains("你好");
         DirectMessageService service = new DirectMessageService(
                 new InMemoryIdentityMappingRepository(),

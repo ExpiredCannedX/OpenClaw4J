@@ -50,7 +50,13 @@ class DefaultAgentFacadeTest {
                 new AgentPromptAssembler(),
                 turnRepository,
                 modelClient,
-                new OpenClawProperties("workspace", 4, "兜底回复")
+                new OpenClawProperties(
+                        "workspace",
+                        4,
+                        "兜底回复",
+                        new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                        new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                )
         );
 
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
@@ -95,7 +101,13 @@ class DefaultAgentFacadeTest {
                 new AgentPromptAssembler(),
                 turnRepository,
                 modelClient,
-                new OpenClawProperties("workspace", 4, "系统暂时繁忙，请稍后再试。")
+                new OpenClawProperties(
+                        "workspace",
+                        4,
+                        "系统暂时繁忙，请稍后再试。",
+                        new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                        new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                )
         );
 
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(

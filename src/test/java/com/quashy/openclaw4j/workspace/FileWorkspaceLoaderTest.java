@@ -23,7 +23,13 @@ class FileWorkspaceLoaderTest {
         Files.writeString(workspaceRoot.resolve("SOUL.md"), "保持克制");
         Files.writeString(workspaceRoot.resolve("USER.md"), "用户偏好");
         Files.writeString(workspaceRoot.resolve("MEMORY.md"), "长期记忆");
-        FileWorkspaceLoader loader = new FileWorkspaceLoader(new OpenClawProperties(workspaceRoot.toString(), 6, "fallback"));
+        FileWorkspaceLoader loader = new FileWorkspaceLoader(new OpenClawProperties(
+                workspaceRoot.toString(),
+                6,
+                "fallback",
+                new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+        ));
 
         WorkspaceSnapshot snapshot = loader.load();
 
@@ -43,7 +49,13 @@ class FileWorkspaceLoaderTest {
     @Test
     void shouldFallbackToEmptyContentWhenWorkspaceFilesAreMissing(@TempDir Path workspaceRoot) throws IOException {
         Files.writeString(workspaceRoot.resolve("SOUL.md"), "仅有规则");
-        FileWorkspaceLoader loader = new FileWorkspaceLoader(new OpenClawProperties(workspaceRoot.toString(), 6, "fallback"));
+        FileWorkspaceLoader loader = new FileWorkspaceLoader(new OpenClawProperties(
+                workspaceRoot.toString(),
+                6,
+                "fallback",
+                new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+        ));
 
         WorkspaceSnapshot snapshot = loader.load();
 

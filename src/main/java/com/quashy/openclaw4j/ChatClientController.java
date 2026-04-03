@@ -2,6 +2,7 @@ package com.quashy.openclaw4j;
 
 import com.quashy.openclaw4j.agent.AgentModelClient;
 import com.quashy.openclaw4j.agent.AgentPrompt;
+import com.quashy.openclaw4j.config.OpenClawProperties;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,20 +23,21 @@ public class ChatClientController {
     private static final Logger LOGGER = LoggerFactory.getLogger(ChatClientController.class);
 
     /**
-     * 调试入口在未传入 prompt 时使用的默认提问，保证旧 PoC 行为仍然可直接验证。
-     */
-    private static final String DEFAULT_PROMPT = "你好，介绍下你自己！";
-
-    /**
      * 复用统一模型抽象，让旧调试入口和新单聊主链路共享相同的模型调用边界。
      */
     private final AgentModelClient agentModelClient;
 
     /**
+     * 收敛调试入口需要的默认 prompt 等运行时配置，避免控制器继续持有不可覆盖的常量。
+     */
+    private final OpenClawProperties properties;
+
+    /**
      * 复用统一的模型抽象，让调试入口和 direct-message 主链路共享同一套模型调用边界。
      */
-    public ChatClientController(AgentModelClient agentModelClient) {
+    public ChatClientController(AgentModelClient agentModelClient, OpenClawProperties properties) {
         this.agentModelClient = agentModelClient;
+        this.properties = properties;
     }
 
     /**
@@ -44,7 +46,7 @@ public class ChatClientController {
     @GetMapping("/simple/chat")
     public String simpleChat(String prompt) {
         if (StringUtils.isBlank(prompt)) {
-            prompt = DEFAULT_PROMPT;
+            prompt = properties.debug().defaultPrompt();
         }
         String content;
         try {
