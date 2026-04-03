@@ -37,8 +37,8 @@ class DirectMessageServiceTest {
                 agentFacade
         );
 
-        service.handle(new DirectMessageRequest("dev", "user-1", "dm-1", "msg-1", "你好"));
-        service.handle(new DirectMessageRequest("dev", "user-1", "dm-1", "msg-2", "继续"));
+        service.handle(new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-1", "你好"));
+        service.handle(new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-2", "继续"));
 
         ArgumentCaptor<AgentRequest> requestCaptor = ArgumentCaptor.forClass(AgentRequest.class);
         verify(agentFacade, times(2)).reply(requestCaptor.capture());
@@ -62,8 +62,8 @@ class DirectMessageServiceTest {
                 agentFacade
         );
 
-        ReplyEnvelope firstReply = service.handle(new DirectMessageRequest("dev", "user-1", "dm-1", "msg-1", "你好"));
-        ReplyEnvelope secondReply = service.handle(new DirectMessageRequest("dev", "user-1", "dm-1", "msg-1", "你好"));
+        ReplyEnvelope firstReply = service.handle(new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-1", "你好"));
+        ReplyEnvelope secondReply = service.handle(new DirectMessageIngressCommand("dev", "user-1", "dm-1", "msg-1", "你好"));
 
         assertThat(secondReply).isEqualTo(firstReply);
         verify(agentFacade, times(1)).reply(any());

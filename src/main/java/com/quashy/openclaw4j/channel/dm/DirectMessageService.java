@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 
 /**
- * 编排 direct-message 入口的标准化、身份映射、活跃会话复用和消息幂等逻辑，让控制器保持薄层。
+ * 编排统一单聊 ingress 的身份映射、活跃会话复用和消息幂等逻辑，让各渠道 adapter 只负责协议翻译。
  */
 @Service
 public class DirectMessageService {
@@ -55,9 +55,9 @@ public class DirectMessageService {
     }
 
     /**
-     * 处理一条开发用单聊消息；若命中重复投递则直接返回旧结果，否则完成标准化与 Agent 调用后再记录幂等结果。
+     * 处理一条已经标准化的单聊入站命令；若命中重复投递则直接返回旧结果，否则完成身份映射与 Agent 调用后再记录幂等结果。
      */
-    public ReplyEnvelope handle(DirectMessageRequest request) {
+    public ReplyEnvelope handle(DirectMessageIngressCommand request) {
         Optional<ReplyEnvelope> existingReply = processedMessageRepository.findProcessedReply(request.channel(), request.externalMessageId());
         if (existingReply.isPresent()) {
             return existingReply.get();

@@ -25,4 +25,17 @@ public record DirectMessageRequest(
          */
         String body
 ) {
+
+    /**
+     * 将开发入口专属 DTO 转换为平台无关的统一 ingress 命令，避免核心应用服务依赖具体 HTTP 请求模型。
+     */
+    public DirectMessageIngressCommand toCommand() {
+        return new DirectMessageIngressCommand(
+                channel,
+                externalUserId,
+                externalConversationId,
+                externalMessageId,
+                body
+        );
+    }
 }

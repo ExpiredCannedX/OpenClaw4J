@@ -30,6 +30,6 @@ public class DirectMessageController {
      */
     @PostMapping
     public ReplyEnvelope directMessage(@RequestBody DirectMessageRequest request) {
-        return directMessageService.handle(request);
+        return directMessageService.handle(request.toCommand());
     }
 }
