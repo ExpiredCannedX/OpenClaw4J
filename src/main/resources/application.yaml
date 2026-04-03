@@ -11,3 +11,8 @@ spring:
       chat:
         options:
           model: qwen3-235b-a22b-thinking-2507
+
+openclaw:
+  workspace-root: ./workspace
+  recent-turn-limit: 6
+  fallback-reply: 系统暂时繁忙，请稍后再试。
