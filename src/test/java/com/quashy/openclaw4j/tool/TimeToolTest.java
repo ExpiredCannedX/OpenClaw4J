@@ -1,5 +1,8 @@
 package com.quashy.openclaw4j.tool;
 
+import com.quashy.openclaw4j.tool.builtin.time.TimeTool;
+import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;

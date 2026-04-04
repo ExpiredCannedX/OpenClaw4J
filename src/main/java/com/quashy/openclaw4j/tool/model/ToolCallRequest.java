@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.model;
 
 import org.springframework.util.Assert;
 

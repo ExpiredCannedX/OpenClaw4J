@@ -1,4 +1,7 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.api;
+
+import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 
 import java.util.Map;
 

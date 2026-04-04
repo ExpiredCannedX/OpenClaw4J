@@ -1,5 +1,8 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.runtime;
 
+import com.quashy.openclaw4j.tool.api.Tool;
+import com.quashy.openclaw4j.tool.api.ToolRegistry;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 

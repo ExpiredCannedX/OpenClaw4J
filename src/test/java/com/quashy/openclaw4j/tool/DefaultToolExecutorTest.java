@@ -1,5 +1,13 @@
 package com.quashy.openclaw4j.tool;
 
+import com.quashy.openclaw4j.tool.api.Tool;
+import com.quashy.openclaw4j.tool.api.ToolRegistry;
+import com.quashy.openclaw4j.tool.model.*;
+import com.quashy.openclaw4j.tool.runtime.DefaultToolExecutor;
+import com.quashy.openclaw4j.tool.runtime.LocalToolRegistry;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
+import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
+import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

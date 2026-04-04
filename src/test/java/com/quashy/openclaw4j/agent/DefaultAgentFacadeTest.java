@@ -9,12 +9,16 @@ import com.quashy.openclaw4j.domain.ReplyEnvelope;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
-import com.quashy.openclaw4j.tool.DefaultToolExecutor;
-import com.quashy.openclaw4j.tool.LocalToolRegistry;
-import com.quashy.openclaw4j.tool.TimeTool;
-import com.quashy.openclaw4j.tool.Tool;
-import com.quashy.openclaw4j.tool.ToolExecutor;
-import com.quashy.openclaw4j.tool.ToolRegistry;
+import com.quashy.openclaw4j.tool.runtime.DefaultToolExecutor;
+import com.quashy.openclaw4j.tool.runtime.LocalToolRegistry;
+import com.quashy.openclaw4j.tool.builtin.time.TimeTool;
+import com.quashy.openclaw4j.tool.api.Tool;
+import com.quashy.openclaw4j.tool.api.ToolExecutor;
+import com.quashy.openclaw4j.tool.api.ToolRegistry;
+import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
+import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
+import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
 import com.quashy.openclaw4j.workspace.LocalSkillDocument;
 import com.quashy.openclaw4j.workspace.WorkspaceFileContent;
 import com.quashy.openclaw4j.workspace.WorkspaceLoader;
@@ -168,19 +172,19 @@ class DefaultAgentFacadeTest {
         InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
         Tool brokenTool = new Tool() {
             @Override
-            public com.quashy.openclaw4j.tool.ToolDefinition definition() {
-                return new com.quashy.openclaw4j.tool.ToolDefinition(
+            public ToolDefinition definition() {
+                return new ToolDefinition(
                         "broken",
                         "用于测试执行失败的工具。",
-                        com.quashy.openclaw4j.tool.ToolInputSchema.object(
-                                Map.of("mode", new com.quashy.openclaw4j.tool.ToolInputProperty("string", "决定执行模式。")),
+                        ToolInputSchema.object(
+                                Map.of("mode", new ToolInputProperty("string", "决定执行模式。")),
                                 List.of("mode")
                         )
                 );
             }
 
             @Override
-            public Map<String, Object> execute(com.quashy.openclaw4j.tool.ToolCallRequest request) {
+            public Map<String, Object> execute(ToolCallRequest request) {
                 throw new IllegalStateException("boom");
             }
         };

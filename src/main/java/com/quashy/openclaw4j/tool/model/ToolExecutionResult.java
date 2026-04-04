@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.model;
 
 /**
  * 表示工具执行后的统一结果边界，使上游只需要区分成功载荷和结构化错误。

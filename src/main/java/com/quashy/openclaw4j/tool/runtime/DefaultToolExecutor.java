@@ -1,5 +1,9 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.runtime;
 
+import com.quashy.openclaw4j.tool.api.Tool;
+import com.quashy.openclaw4j.tool.api.ToolExecutor;
+import com.quashy.openclaw4j.tool.api.ToolRegistry;
+import com.quashy.openclaw4j.tool.model.*;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;

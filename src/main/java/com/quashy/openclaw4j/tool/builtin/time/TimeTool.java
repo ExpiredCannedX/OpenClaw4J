@@ -1,5 +1,9 @@
-package com.quashy.openclaw4j.tool;
+package com.quashy.openclaw4j.tool.builtin.time;
 
+import com.quashy.openclaw4j.tool.api.Tool;
+import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
+import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
