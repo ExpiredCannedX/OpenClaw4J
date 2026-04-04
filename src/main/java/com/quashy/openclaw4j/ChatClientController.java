@@ -50,7 +50,7 @@ public class ChatClientController {
         }
         String content;
         try {
-            content = agentModelClient.generate(new AgentPrompt(prompt));
+            content = agentModelClient.generateFinalReply(new AgentPrompt(prompt));
         } catch (Exception e) {
             LOGGER.error("simpleChat error", e);
             throw new RuntimeException(e.getMessage());

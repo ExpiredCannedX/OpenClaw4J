@@ -1,8 +1,10 @@
 package com.quashy.openclaw4j.channel.dm;
 
+import com.quashy.openclaw4j.agent.AgentPrompt;
 import com.quashy.openclaw4j.agent.AgentPromptAssembler;
 import com.quashy.openclaw4j.agent.AgentModelClient;
 import com.quashy.openclaw4j.agent.DefaultAgentFacade;
+import com.quashy.openclaw4j.agent.FinalReplyDecision;
 import com.quashy.openclaw4j.config.OpenClawProperties;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
@@ -10,6 +12,9 @@ import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
+import com.quashy.openclaw4j.tool.DefaultToolExecutor;
+import com.quashy.openclaw4j.tool.LocalToolRegistry;
+import com.quashy.openclaw4j.tool.Tool;
 import com.quashy.openclaw4j.workspace.FileWorkspaceLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +24,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -55,7 +61,24 @@ class DirectMessageControllerTest {
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
         );
-        AgentModelClient modelClient = prompt -> "已收到：" + prompt.content().contains("你好");
+        AgentModelClient modelClient = new AgentModelClient() {
+            /**
+             * 对测试请求始终返回最终回复决策，确保 DirectMessageController 能走通新的结构化模型协议。
+             */
+            @Override
+            public com.quashy.openclaw4j.agent.AgentModelDecision decideNextAction(AgentPrompt prompt) {
+                return new FinalReplyDecision("已收到：" + prompt.content().contains("你好"));
+            }
+
+            /**
+             * 该测试不会进入工具观察后的最终回复阶段，因此返回占位文本即可防止误调用。
+             */
+            @Override
+            public String generateFinalReply(AgentPrompt prompt) {
+                return "unexpected";
+            }
+        };
+        LocalToolRegistry toolRegistry = new LocalToolRegistry(List.<Tool>of());
         DirectMessageService service = new DirectMessageService(
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
@@ -66,6 +89,8 @@ class DirectMessageControllerTest {
                         new SkillResolver(new SkillMarkdownParser()),
                         new InMemoryConversationTurnRepository(),
                         modelClient,
+                        toolRegistry,
+                        new DefaultToolExecutor(toolRegistry),
                         properties
                 )
         );

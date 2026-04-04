@@ -23,7 +23,7 @@ class ChatClientControllerTest {
     @Test
     void shouldUseConfiguredDefaultPromptWhenPromptIsBlank() {
         AgentModelClient agentModelClient = mock(AgentModelClient.class);
-        when(agentModelClient.generate(any(AgentPrompt.class))).thenReturn("ok");
+        when(agentModelClient.generateFinalReply(any(AgentPrompt.class))).thenReturn("ok");
         OpenClawProperties properties = new OpenClawProperties(
                 "./workspace",
                 6,
@@ -36,7 +36,7 @@ class ChatClientControllerTest {
         controller.simpleChat("  ");
 
         ArgumentCaptor<AgentPrompt> promptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
-        verify(agentModelClient).generate(promptCaptor.capture());
+        verify(agentModelClient).generateFinalReply(promptCaptor.capture());
         assertThat(promptCaptor.getValue().content()).isEqualTo("来自配置的默认问题");
     }
 }

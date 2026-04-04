@@ -2,11 +2,16 @@ package com.quashy.openclaw4j.agent;
 
 import com.quashy.openclaw4j.config.OpenClawProperties;
 import com.quashy.openclaw4j.domain.ConversationTurn;
+import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
 import com.quashy.openclaw4j.domain.ReplySignal;
 import com.quashy.openclaw4j.repository.ConversationTurnRepository;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
 import com.quashy.openclaw4j.skill.SkillResolver;
+import com.quashy.openclaw4j.tool.ToolCallRequest;
+import com.quashy.openclaw4j.tool.ToolExecutionResult;
+import com.quashy.openclaw4j.tool.ToolExecutor;
+import com.quashy.openclaw4j.tool.ToolRegistry;
 import com.quashy.openclaw4j.workspace.WorkspaceLoader;
 import com.quashy.openclaw4j.workspace.WorkspaceSnapshot;
 import org.springframework.stereotype.Service;
@@ -48,6 +53,16 @@ public class DefaultAgentFacade implements AgentFacade {
     private final AgentModelClient agentModelClient;
 
     /**
+     * 暴露当前请求可见的工具目录，供规划阶段 prompt 组装与工具按名解析使用。
+     */
+    private final ToolRegistry toolRegistry;
+
+    /**
+     * 负责执行一次同步工具调用并统一收敛执行结果，避免主链路处理工具异常细节。
+     */
+    private final ToolExecutor toolExecutor;
+
+    /**
      * 提供 workspace 路径、recent turn 数量和失败兜底文案等当前阶段必须配置。
      */
     private final OpenClawProperties properties;
@@ -61,6 +76,8 @@ public class DefaultAgentFacade implements AgentFacade {
             SkillResolver skillResolver,
             ConversationTurnRepository conversationTurnRepository,
             AgentModelClient agentModelClient,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
             OpenClawProperties properties
     ) {
         this.workspaceLoader = workspaceLoader;
@@ -68,11 +85,13 @@ public class DefaultAgentFacade implements AgentFacade {
         this.skillResolver = skillResolver;
         this.conversationTurnRepository = conversationTurnRepository;
         this.agentModelClient = agentModelClient;
+        this.toolRegistry = toolRegistry;
+        this.toolExecutor = toolExecutor;
         this.properties = properties;
     }
 
     /**
-     * 执行一次完整的最小单聊推理流程，并确保无论模型成功还是失败，都返回统一结构的 `ReplyEnvelope`。
+     * 执行一次完整的最小单聊推理流程，并在“直接回复”与“单次工具调用”之间进行有界闭环。
      */
     @Override
     public ReplyEnvelope reply(AgentRequest request) {
@@ -82,19 +101,19 @@ public class DefaultAgentFacade implements AgentFacade {
                 workspaceSnapshot.localSkillDocuments()
         );
         List<ConversationTurn> recentTurns = conversationTurnRepository.loadRecentTurns(request.conversationId(), properties.recentTurnLimit());
-        AgentPrompt prompt = promptAssembler.assemble(workspaceSnapshot, selectedSkill, recentTurns, request.message());
         conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.user(request.message().body()));
         try {
-            String replyBody = agentModelClient.generate(prompt);
-            if (!StringUtils.hasText(replyBody)) {
-                conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.assistant(properties.fallbackReply()));
-                return new ReplyEnvelope(properties.fallbackReply(), List.of());
-            }
-            conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.assistant(replyBody));
-            return new ReplyEnvelope(replyBody, buildSignals(selectedSkill));
+            AgentModelDecision decision = agentModelClient.decideNextAction(promptAssembler.assemblePlanningPrompt(
+                    workspaceSnapshot,
+                    selectedSkill,
+                    recentTurns,
+                    request.message(),
+                    toolRegistry.listDefinitions()
+            ));
+            String replyBody = resolveReplyBody(workspaceSnapshot, selectedSkill, recentTurns, request, decision);
+            return buildReplyEnvelope(request.conversationId(), replyBody, selectedSkill);
         } catch (Exception exception) {
-            conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.assistant(properties.fallbackReply()));
-            return new ReplyEnvelope(properties.fallbackReply(), List.of());
+            return fallbackReply(request.conversationId());
         }
     }
 
@@ -111,5 +130,55 @@ public class DefaultAgentFacade implements AgentFacade {
                         )
                 )))
                 .orElseGet(List::of);
+    }
+
+    /**
+     * 根据模型决策选择直接回复或一次工具调用闭环，把最终回复正文统一收敛成一个字符串结果。
+     */
+    private String resolveReplyBody(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            AgentRequest request,
+            AgentModelDecision decision
+    ) {
+        if (decision instanceof FinalReplyDecision finalReplyDecision) {
+            return finalReplyDecision.reply();
+        }
+        ToolCallDecision toolCallDecision = (ToolCallDecision) decision;
+        ToolExecutionResult observation = toolExecutor.execute(new ToolCallRequest(
+                toolCallDecision.toolName(),
+                toolCallDecision.arguments()
+        ));
+        return agentModelClient.generateFinalReply(promptAssembler.assembleFinalReplyPrompt(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                request.message(),
+                observation
+        ));
+    }
+
+    /**
+     * 在最终正文非空时写入助手回复并返回正常结果，否则统一回退到系统兜底回复。
+     */
+    private ReplyEnvelope buildReplyEnvelope(
+            InternalConversationId conversationId,
+            String replyBody,
+            Optional<ResolvedSkill> selectedSkill
+    ) {
+        if (!StringUtils.hasText(replyBody)) {
+            return fallbackReply(conversationId);
+        }
+        conversationTurnRepository.appendTurn(conversationId, ConversationTurn.assistant(replyBody));
+        return new ReplyEnvelope(replyBody, buildSignals(selectedSkill));
+    }
+
+    /**
+     * 统一落盘并返回兜底回复，确保所有失败路径对渠道层都保持相同协议。
+     */
+    private ReplyEnvelope fallbackReply(InternalConversationId conversationId) {
+        conversationTurnRepository.appendTurn(conversationId, ConversationTurn.assistant(properties.fallbackReply()));
+        return new ReplyEnvelope(properties.fallbackReply(), List.of());
     }
 }
