@@ -7,6 +7,9 @@ import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.agent.runtime.DefaultAgentFacade;
 import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
 import com.quashy.openclaw4j.config.OpenClawProperties;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
+import com.quashy.openclaw4j.observability.runtime.DefaultRuntimeObservationPublisher;
+import com.quashy.openclaw4j.observability.sink.NoopRuntimeObservationSink;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
@@ -25,6 +28,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -60,7 +64,14 @@ class DirectMessageControllerTest {
                 6,
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
-                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
+        );
+        DefaultRuntimeObservationPublisher observationPublisher = new DefaultRuntimeObservationPublisher(
+                RuntimeObservationMode.OFF,
+                160,
+                new NoopRuntimeObservationSink(),
+                Clock.systemUTC()
         );
         AgentModelClient modelClient = new AgentModelClient() {
             /**
@@ -92,8 +103,11 @@ class DirectMessageControllerTest {
                         modelClient,
                         toolRegistry,
                         new DefaultToolExecutor(toolRegistry),
-                        properties
+                        properties,
+                        observationPublisher
                 )
+                ,
+                observationPublisher
         );
         MockMvc mockMvc = MockMvcBuilders.standaloneSetup(new DirectMessageController(service)).build();
 

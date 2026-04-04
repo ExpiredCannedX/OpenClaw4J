@@ -1,5 +1,6 @@
 package com.quashy.openclaw4j.config;
 
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.StringUtils;
 
@@ -27,7 +28,11 @@ public record OpenClawProperties(
         /**
          * 收敛 Telegram 渠道所需的运行时配置，确保 `application.yaml` 中的 Telegram 字段能够被正式绑定和消费。
          */
-        TelegramProperties telegram
+        TelegramProperties telegram,
+        /**
+         * 收敛运行期可观测性模式与 sink 相关配置，确保默认行为能在应用级统一声明。
+         */
+        ObservabilityProperties observability
 ) {
 
     /**
@@ -39,6 +44,7 @@ public record OpenClawProperties(
         fallbackReply = StringUtils.hasText(fallbackReply) ? fallbackReply : "系统暂时繁忙，请稍后再试。";
         debug = debug != null ? debug : new DebugProperties(null);
         telegram = telegram != null ? telegram : new TelegramProperties(false, null, null, null, null);
+        observability = observability != null ? observability : new ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160);
     }
 
     /**
@@ -93,6 +99,33 @@ public record OpenClawProperties(
             webhookSecret = StringUtils.hasText(webhookSecret) ? webhookSecret : "";
             webhookPath = StringUtils.hasText(webhookPath) ? webhookPath : "/api/telegram/webhook";
             webhookUrl = StringUtils.hasText(webhookUrl) ? webhookUrl : "";
+        }
+    }
+
+    /**
+     * 描述运行期可观测性的默认模式和 sink 级配置，避免这些横切参数散落在业务类中。
+     */
+    public record ObservabilityProperties(
+            /**
+             * 控制当前进程启用的观测模式，是事件过滤与字段分级的唯一入口。
+             */
+            RuntimeObservationMode mode,
+            /**
+             * 控制首个控制台 sink 是否启用，便于开发者在不改代码的情况下快速关闭输出。
+             */
+            boolean consoleEnabled,
+            /**
+             * 控制 `VERBOSE` 模式下详细预览字段的最大长度，避免原始 prompt 或回复被完整打印。
+             */
+            int verbosePreviewLength
+    ) {
+
+        /**
+         * 对运行期可观测性配置提供稳定默认值，保证应用在未显式声明时仍按时间线模式工作。
+         */
+        public ObservabilityProperties {
+            mode = mode != null ? mode : RuntimeObservationMode.TIMELINE;
+            verbosePreviewLength = verbosePreviewLength > 0 ? verbosePreviewLength : 160;
         }
     }
 }

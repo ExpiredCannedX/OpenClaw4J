@@ -6,11 +6,16 @@ import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
+import com.quashy.openclaw4j.observability.model.TraceContext;
+import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.repository.ActiveConversationRepository;
 import com.quashy.openclaw4j.repository.IdentityMappingRepository;
 import com.quashy.openclaw4j.repository.ProcessedMessageRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +49,11 @@ public class DirectMessageService {
     private final AgentFacade agentFacade;
 
     /**
+     * 负责创建 trace 并发布 direct-message 边界事件，避免各个渠道重复手写观测逻辑。
+     */
+    private final RuntimeObservationPublisher runtimeObservationPublisher;
+
+    /**
      * 记录正在处理中但尚未落入最终幂等缓存的消息结果，防止 webhook 并发重投把同一条消息送入 Agent 两次。
      */
     private final Map<String, CompletableFuture<ReplyEnvelope>> inFlightReplies = new ConcurrentHashMap<>();
@@ -55,12 +65,14 @@ public class DirectMessageService {
             IdentityMappingRepository identityMappingRepository,
             ActiveConversationRepository activeConversationRepository,
             ProcessedMessageRepository processedMessageRepository,
-            AgentFacade agentFacade
+            AgentFacade agentFacade,
+            RuntimeObservationPublisher runtimeObservationPublisher
     ) {
         this.identityMappingRepository = identityMappingRepository;
         this.activeConversationRepository = activeConversationRepository;
         this.processedMessageRepository = processedMessageRepository;
         this.agentFacade = agentFacade;
+        this.runtimeObservationPublisher = runtimeObservationPublisher;
     }
 
     /**
@@ -74,23 +86,79 @@ public class DirectMessageService {
      * 在返回统一回复的同时暴露“是否首次处理成功”的元信息，供 Telegram 等渠道在重复 webhook 投递时避免再次发送旧结果。
      */
     public DirectMessageHandleResult handleWithMetadata(DirectMessageIngressCommand request) {
+        return handleWithMetadata(
+                request,
+                runtimeObservationPublisher.createTrace(request.channel(), request.externalConversationId(), request.externalMessageId())
+        );
+    }
+
+    /**
+     * 使用调用方已创建好的 trace 上下文处理一次统一单聊 ingress，保证 Telegram 与 Agent Core 能共享同一 `runId`。
+     */
+    public DirectMessageHandleResult handleWithMetadata(DirectMessageIngressCommand request, TraceContext traceContext) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "direct_message.received",
+                RuntimeObservationPhase.INGRESS,
+                RuntimeObservationLevel.INFO,
+                "DirectMessageService",
+                Map.of(
+                        "channel", request.channel(),
+                        "externalConversationId", request.externalConversationId(),
+                        "externalMessageId", request.externalMessageId()
+                )
+        );
         Optional<ReplyEnvelope> existingReply = processedMessageRepository.findProcessedReply(request.channel(), request.externalMessageId());
         if (existingReply.isPresent()) {
-            return new DirectMessageHandleResult(existingReply.get(), false);
+            runtimeObservationPublisher.emit(
+                    traceContext,
+                    "direct_message.duplicate_cached",
+                    RuntimeObservationPhase.IDEMPOTENCY,
+                    RuntimeObservationLevel.WARN,
+                    "DirectMessageService",
+                    Map.of("reason", "processed_cache_hit")
+            );
+            return new DirectMessageHandleResult(existingReply.get(), false, traceContext);
         }
         String messageKey = buildMessageKey(request.channel(), request.externalMessageId());
         CompletableFuture<ReplyEnvelope> newInFlightReply = new CompletableFuture<>();
         CompletableFuture<ReplyEnvelope> existingInFlightReply = inFlightReplies.putIfAbsent(messageKey, newInFlightReply);
         if (existingInFlightReply != null) {
-            return new DirectMessageHandleResult(awaitInFlightReply(existingInFlightReply), false);
+            runtimeObservationPublisher.emit(
+                    traceContext,
+                    "direct_message.duplicate_inflight",
+                    RuntimeObservationPhase.IDEMPOTENCY,
+                    RuntimeObservationLevel.WARN,
+                    "DirectMessageService",
+                    Map.of("reason", "in_flight_reused")
+            );
+            return new DirectMessageHandleResult(awaitInFlightReply(existingInFlightReply), false, traceContext);
         }
         try {
-            ReplyEnvelope replyEnvelope = processNewMessage(request);
+            runtimeObservationPublisher.emit(
+                    traceContext,
+                    "direct_message.first_processing",
+                    RuntimeObservationPhase.INGRESS,
+                    RuntimeObservationLevel.INFO,
+                    "DirectMessageService",
+                    Map.of("channel", request.channel())
+            );
+            FirstProcessingResult firstProcessingResult = processNewMessage(request, traceContext);
+            ReplyEnvelope replyEnvelope = firstProcessingResult.replyEnvelope();
             processedMessageRepository.saveProcessedReply(request.channel(), request.externalMessageId(), replyEnvelope);
             newInFlightReply.complete(replyEnvelope);
-            return new DirectMessageHandleResult(replyEnvelope, true);
+            return new DirectMessageHandleResult(replyEnvelope, true, firstProcessingResult.traceContext());
         } catch (RuntimeException exception) {
             newInFlightReply.completeExceptionally(exception);
+            runtimeObservationPublisher.emit(
+                    traceContext,
+                    "direct_message.failed",
+                    RuntimeObservationPhase.INGRESS,
+                    RuntimeObservationLevel.ERROR,
+                    "DirectMessageService",
+                    Map.of("exceptionType", exception.getClass().getSimpleName()),
+                    buildExceptionVerbosePayload(exception)
+            );
             throw exception;
         } finally {
             inFlightReplies.remove(messageKey, newInFlightReply);
@@ -100,7 +168,7 @@ public class DirectMessageService {
     /**
      * 真正执行首次消息处理流程，只在确认当前消息不属于已完成或进行中的重复投递后才调用 Agent。
      */
-    private ReplyEnvelope processNewMessage(DirectMessageIngressCommand request) {
+    private FirstProcessingResult processNewMessage(DirectMessageIngressCommand request, TraceContext traceContext) {
         NormalizedDirectMessage message = new NormalizedDirectMessage(
                 request.channel(),
                 request.externalUserId(),
@@ -110,7 +178,8 @@ public class DirectMessageService {
         );
         InternalUserId userId = identityMappingRepository.getOrCreateInternalUserId(request.channel(), request.externalUserId());
         InternalConversationId conversationId = activeConversationRepository.getOrCreateActiveConversation(request.channel(), request.externalUserId());
-        return agentFacade.reply(new AgentRequest(userId, conversationId, message));
+        TraceContext enrichedTraceContext = traceContext.withInternalConversationId(conversationId.value());
+        return new FirstProcessingResult(agentFacade.reply(new AgentRequest(userId, conversationId, message, enrichedTraceContext)), enrichedTraceContext);
     }
 
     /**
@@ -132,5 +201,31 @@ public class DirectMessageService {
      */
     private String buildMessageKey(String channel, String externalMessageId) {
         return channel + "::" + externalMessageId;
+    }
+
+    /**
+     * 把异常的可选调试细节收敛到详细负载中，避免默认时间线模式直接打印完整异常文本。
+     */
+    private Map<String, Object> buildExceptionVerbosePayload(RuntimeException exception) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (exception.getMessage() != null && !exception.getMessage().isBlank()) {
+            payload.put("exceptionMessage", exception.getMessage());
+        }
+        return payload;
+    }
+
+    /**
+     * 承载首次处理路径返回的回复和增强后的 trace 上下文，避免内部会话标识在后续出站阶段丢失。
+     */
+    private record FirstProcessingResult(
+            /**
+             * 保存本次首次处理真正生成的统一回复，用于幂等缓存和渠道返回。
+             */
+            ReplyEnvelope replyEnvelope,
+            /**
+             * 保存已经补齐内部会话标识的 trace 上下文，供 Telegram 等后续边界继续复用。
+             */
+            TraceContext traceContext
+    ) {
     }
 }

@@ -26,3 +26,9 @@ openclaw:
     webhook-secret: ${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}
     webhook-path: ${telegram.webhook-path:${TELEGRAM_WEBHOOK_PATH:/api/telegram/webhook}}
     webhook-url: ${telegram.webhook-url:${TELEGRAM_WEBHOOK_URL:}}
+  observability:
+    # - `ERRORS` / `TIMELINE` 只输出摘要字段，如工具名、Skill 名、事件耗时、输入长度、结果状态。
+    #- `VERBOSE` 才允许输出截断后的预览字段，且需限制长度，避免完整 prompt、workspace 文本和原始模型输出直接打到控制台。
+    mode: ${OPENCLAW_OBSERVABILITY_MODE:VERBOSE}
+    console-enabled: ${OPENCLAW_OBSERVABILITY_CONSOLE_ENABLED:true}
+    verbose-preview-length: ${OPENCLAW_OBSERVABILITY_VERBOSE_PREVIEW_LENGTH:99999}

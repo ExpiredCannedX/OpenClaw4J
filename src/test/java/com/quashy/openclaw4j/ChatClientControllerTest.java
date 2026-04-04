@@ -3,6 +3,7 @@ package com.quashy.openclaw4j;
 import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 import com.quashy.openclaw4j.config.OpenClawProperties;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -29,7 +30,8 @@ class ChatClientControllerTest {
                 6,
                 "fallback",
                 new OpenClawProperties.DebugProperties("来自配置的默认问题"),
-                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
         );
         ChatClientController controller = new ChatClientController(agentModelClient, properties);
 

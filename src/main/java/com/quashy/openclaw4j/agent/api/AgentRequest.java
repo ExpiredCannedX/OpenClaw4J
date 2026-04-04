@@ -3,6 +3,7 @@ package com.quashy.openclaw4j.agent.api;
 import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.observability.model.TraceContext;
 
 /**
  * 表示统一 Agent 入口接收的内部请求，明确区分身份映射完成后的用户、会话与当前消息。
@@ -19,6 +20,10 @@ public record AgentRequest(
         /**
          * 保存当前这次进入 Agent 的标准化单聊消息，是本轮推理的直接输入。
          */
-        NormalizedDirectMessage message
+        NormalizedDirectMessage message,
+        /**
+         * 保存当前这轮请求的 trace 上下文，使 Agent Core、工具和渠道出站事件都能共享同一 `runId`。
+         */
+        TraceContext traceContext
 ) {
 }

@@ -13,6 +13,12 @@ import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationEvent;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
+import com.quashy.openclaw4j.observability.model.TraceContext;
+import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
@@ -36,6 +42,7 @@ import org.mockito.ArgumentCaptor;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +57,54 @@ import static org.mockito.Mockito.when;
  * 验证 Agent Core 在加入单次工具调用闭环后，仍能稳定完成 prompt 组装、工具观察回填和安全兜底。
  */
 class DefaultAgentFacadeTest {
+
+    /**
+     * 工具闭环路径必须产出覆盖 workspace、模型决策、工具执行和最终回复的连续时间线，并保持同一 `runId` 关联。
+     */
+    @Test
+    void shouldEmitObservationTimelineForToolBackedRunWithoutPollutingReplyEnvelope() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision("time", Map.of()));
+        when(modelClient.generateFinalReply(any())).thenReturn("现在是北京时间 2026-04-03 16:09:10。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(TimeTool.forClock(fixedClock())));
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.TIMELINE);
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher
+        );
+        TraceContext traceContext = new TraceContext("run-1", "dev", "dm-2", "msg-2", null, RuntimeObservationMode.TIMELINE);
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-2"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-2", "msg-2", "现在几点了？"),
+                traceContext
+        ));
+
+        assertThat(publisher.events)
+                .extracting(RuntimeObservationEvent::eventType)
+                .containsSubsequence(
+                        "agent.run.started",
+                        "agent.workspace.loaded",
+                        "agent.skill.resolved",
+                        "agent.model.decision.completed",
+                        "agent.tool.execution.completed",
+                        "agent.model.final_reply.completed",
+                        "agent.reply.completed",
+                        "agent.run.completed"
+                );
+        assertThat(publisher.events)
+                .extracting(event -> event.traceContext().runId())
+                .containsOnly("run-1");
+        assertThat(replyEnvelope.signals()).isEmpty();
+    }
 
     /**
      * 模型直接返回最终回复时，系统必须把 Skill、最近会话和可用工具目录一并暴露给规划阶段，同时保持单次回复语义。
@@ -70,7 +125,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 conversationId,
-                new NormalizedDirectMessage("dev", "user-1", "dm-1", "msg-1", "请使用 $code-review 处理这一轮问题")
+                new NormalizedDirectMessage("dev", "user-1", "dm-1", "msg-1", "请使用 $code-review 处理这一轮问题"),
+                new TraceContext("run-1", "dev", "dm-1", "msg-1", "conversation-1", RuntimeObservationMode.OFF)
         ));
 
         ArgumentCaptor<AgentPrompt> promptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
@@ -119,7 +175,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 new InternalConversationId("conversation-2"),
-                new NormalizedDirectMessage("dev", "user-1", "dm-2", "msg-2", "现在几点了？")
+                new NormalizedDirectMessage("dev", "user-1", "dm-2", "msg-2", "现在几点了？"),
+                new TraceContext("run-2", "dev", "dm-2", "msg-2", "conversation-2", RuntimeObservationMode.OFF)
         ));
 
         ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
@@ -154,7 +211,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 new InternalConversationId("conversation-3"),
-                new NormalizedDirectMessage("dev", "user-1", "dm-3", "msg-3", "帮我调用一个还没接入的工具")
+                new NormalizedDirectMessage("dev", "user-1", "dm-3", "msg-3", "帮我调用一个还没接入的工具"),
+                new TraceContext("run-3", "dev", "dm-3", "msg-3", "conversation-3", RuntimeObservationMode.OFF)
         ));
 
         ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
@@ -201,7 +259,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 new InternalConversationId("conversation-4"),
-                new NormalizedDirectMessage("dev", "user-1", "dm-4", "msg-4", "请尝试坏掉的工具")
+                new NormalizedDirectMessage("dev", "user-1", "dm-4", "msg-4", "请尝试坏掉的工具"),
+                new TraceContext("run-4", "dev", "dm-4", "msg-4", "conversation-4", RuntimeObservationMode.OFF)
         ));
 
         ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
@@ -229,7 +288,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 new InternalConversationId("conversation-5"),
-                new NormalizedDirectMessage("dev", "user-1", "dm-5", "msg-5", "这一轮问题")
+                new NormalizedDirectMessage("dev", "user-1", "dm-5", "msg-5", "这一轮问题"),
+                new TraceContext("run-5", "dev", "dm-5", "msg-5", "conversation-5", RuntimeObservationMode.OFF)
         ));
 
         assertThat(replyEnvelope.body()).isEqualTo("系统暂时繁忙，请稍后再试。");
@@ -255,7 +315,8 @@ class DefaultAgentFacadeTest {
         ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
                 new InternalUserId("user-1"),
                 new InternalConversationId("conversation-6"),
-                new NormalizedDirectMessage("dev", "user-1", "dm-6", "msg-6", "这一轮问题")
+                new NormalizedDirectMessage("dev", "user-1", "dm-6", "msg-6", "这一轮问题"),
+                new TraceContext("run-6", "dev", "dm-6", "msg-6", "conversation-6", RuntimeObservationMode.OFF)
         ));
 
         assertThat(replyEnvelope.body()).isEqualTo("系统暂时繁忙，请稍后再试。");
@@ -272,6 +333,20 @@ class DefaultAgentFacadeTest {
             ToolRegistry toolRegistry,
             ToolExecutor toolExecutor
     ) {
+        return createFacade(workspaceLoader, turnRepository, modelClient, toolRegistry, toolExecutor, new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF));
+    }
+
+    /**
+     * 允许测试显式注入观测事件记录器，便于覆盖时间线与失败事件而不引入真实 sink 依赖。
+     */
+    private DefaultAgentFacade createFacade(
+            WorkspaceLoader workspaceLoader,
+            InMemoryConversationTurnRepository turnRepository,
+            AgentModelClient modelClient,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            RuntimeObservationPublisher observationPublisher
+    ) {
         return new DefaultAgentFacade(
                 workspaceLoader,
                 new AgentPromptAssembler(),
@@ -285,8 +360,10 @@ class DefaultAgentFacadeTest {
                         4,
                         "系统暂时繁忙，请稍后再试。",
                         new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
-                        new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
-                )
+                        new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                        new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
+                ),
+                observationPublisher
         );
     }
 
@@ -340,5 +417,79 @@ class DefaultAgentFacadeTest {
      */
     private Clock fixedClock() {
         return Clock.fixed(Instant.parse("2026-04-03T08:09:10Z"), ZoneId.of("Asia/Shanghai"));
+    }
+
+    /**
+     * 记录 Agent Core 发出的观测事件，便于测试断言时间线顺序、失败路径和 `runId` 关联语义。
+     */
+    private static final class RecordingRuntimeObservationPublisher implements RuntimeObservationPublisher {
+
+        /**
+         * 控制当前测试所模拟的观测模式，以便在无关用例中快速关闭事件记录。
+         */
+        private final RuntimeObservationMode mode;
+
+        /**
+         * 保存 Agent Core 发布的所有事件，供测试断言阶段顺序和字段边界。
+         */
+        private final List<RuntimeObservationEvent> events = new ArrayList<>();
+
+        /**
+         * 通过构造器显式声明模式，确保测试不依赖 Spring 配置绑定结果。
+         */
+        private RecordingRuntimeObservationPublisher(RuntimeObservationMode mode) {
+            this.mode = mode;
+        }
+
+        /**
+         * Agent Core 测试不会自己创建 trace，但这里仍实现接口以保持与生产契约一致。
+         */
+        @Override
+        public TraceContext createTrace(String channel, String externalConversationId, String externalMessageId) {
+            return new TraceContext("generated-run", channel, externalConversationId, externalMessageId, null, mode);
+        }
+
+        /**
+         * 记录只包含摘要字段的事件，满足时间线模式下的大多数断言需求。
+         */
+        @Override
+        public void emit(
+                TraceContext traceContext,
+                String eventType,
+                RuntimeObservationPhase phase,
+                RuntimeObservationLevel level,
+                String component,
+                Map<String, Object> payload
+        ) {
+            emit(traceContext, eventType, phase, level, component, payload, Map.of());
+        }
+
+        /**
+         * 按原样保存事件对象，让测试能验证 `runId` 和阶段顺序，而不耦合控制台渲染格式。
+         */
+        @Override
+        public void emit(
+                TraceContext traceContext,
+                String eventType,
+                RuntimeObservationPhase phase,
+                RuntimeObservationLevel level,
+                String component,
+                Map<String, Object> payload,
+                Map<String, Object> verbosePayload
+        ) {
+            if (mode == RuntimeObservationMode.OFF) {
+                return;
+            }
+            events.add(new RuntimeObservationEvent(
+                    Instant.parse("2026-04-04T08:00:00Z"),
+                    eventType,
+                    phase,
+                    level,
+                    component,
+                    traceContext,
+                    payload,
+                    verbosePayload
+            ));
+        }
     }
 }

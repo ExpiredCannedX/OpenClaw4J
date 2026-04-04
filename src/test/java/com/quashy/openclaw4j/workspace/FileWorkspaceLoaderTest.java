@@ -1,6 +1,7 @@
 package com.quashy.openclaw4j.workspace;
 
 import com.quashy.openclaw4j.config.OpenClawProperties;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -33,7 +34,8 @@ class FileWorkspaceLoaderTest {
                 6,
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
-                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
         ));
 
         WorkspaceSnapshot snapshot = loader.load();
@@ -69,7 +71,8 @@ class FileWorkspaceLoaderTest {
                 6,
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
-                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", "")
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
         ));
 
         WorkspaceSnapshot snapshot = loader.load();
