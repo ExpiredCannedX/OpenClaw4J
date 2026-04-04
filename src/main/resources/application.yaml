@@ -32,3 +32,5 @@ openclaw:
     mode: ${OPENCLAW_OBSERVABILITY_MODE:VERBOSE}
     console-enabled: ${OPENCLAW_OBSERVABILITY_CONSOLE_ENABLED:true}
     verbose-preview-length: ${OPENCLAW_OBSERVABILITY_VERBOSE_PREVIEW_LENGTH:99999}
+  memory:
+    index-file: ${OPENCLAW_MEMORY_INDEX_FILE:.openclaw/memory-index.sqlite}

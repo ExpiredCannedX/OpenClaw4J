@@ -32,7 +32,11 @@ public record OpenClawProperties(
         /**
          * 收敛运行期可观测性模式与 sink 相关配置，确保默认行为能在应用级统一声明。
          */
-        ObservabilityProperties observability
+        ObservabilityProperties observability,
+        /**
+         * 收敛 memory V1 的本地索引文件配置，避免 SQLite 路径散落在索引器与工具实现中。
+         */
+        MemoryProperties memory
 ) {
 
     /**
@@ -45,6 +49,7 @@ public record OpenClawProperties(
         debug = debug != null ? debug : new DebugProperties(null);
         telegram = telegram != null ? telegram : new TelegramProperties(false, null, null, null, null);
         observability = observability != null ? observability : new ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160);
+        memory = memory != null ? memory : new MemoryProperties(null);
     }
 
     /**
@@ -126,6 +131,24 @@ public record OpenClawProperties(
         public ObservabilityProperties {
             mode = mode != null ? mode : RuntimeObservationMode.TIMELINE;
             verbosePreviewLength = verbosePreviewLength > 0 ? verbosePreviewLength : 160;
+        }
+    }
+
+    /**
+     * 描述 memory V1 需要的最小索引配置，使本地 SQLite 单文件索引拥有稳定默认落点。
+     */
+    public record MemoryProperties(
+            /**
+             * 指向 memory SQLite 单文件索引的相对或绝对路径；相对路径默认以 workspace 根目录为基准解析。
+             */
+            String indexFile
+    ) {
+
+        /**
+         * 为 memory 索引文件提供稳定默认值，保证首次启用 memory 时能在 workspace 下自动建库。
+         */
+        public MemoryProperties {
+            indexFile = StringUtils.hasText(indexFile) ? indexFile : ".openclaw/memory-index.sqlite";
         }
     }
 }

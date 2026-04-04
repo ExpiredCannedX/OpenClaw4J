@@ -19,7 +19,7 @@ class OpenClawPropertiesBindingTest {
      * 使用与应用启动一致的 Spring Boot 配置绑定路径，确保运行时真的能从配置源读取调试入口、Telegram 与观测参数。
      */
     @Test
-    void shouldBindDebugTelegramAndObservabilityPropertiesFromConfiguration() {
+    void shouldBindDebugTelegramObservabilityAndMemoryPropertiesFromConfiguration() {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(ConfigurationPropertiesAutoConfiguration.class))
                 .withUserConfiguration(TestConfiguration.class)
@@ -35,7 +35,8 @@ class OpenClawPropertiesBindingTest {
                         "openclaw.telegram.webhook-url=https://example.ngrok-free.app/api/telegram/webhook",
                         "openclaw.observability.mode=VERBOSE",
                         "openclaw.observability.console-enabled=false",
-                        "openclaw.observability.verbose-preview-length=64"
+                        "openclaw.observability.verbose-preview-length=64",
+                        "openclaw.memory.index-file=.openclaw/memory-index.sqlite"
                 )
                 .run(context -> {
                     OpenClawProperties properties = context.getBean(OpenClawProperties.class);
@@ -49,6 +50,7 @@ class OpenClawPropertiesBindingTest {
                     assertThat(properties.observability().mode()).isEqualTo(RuntimeObservationMode.VERBOSE);
                     assertThat(properties.observability().consoleEnabled()).isFalse();
                     assertThat(properties.observability().verbosePreviewLength()).isEqualTo(64);
+                    assertThat(properties.memory().indexFile()).isEqualTo(".openclaw/memory-index.sqlite");
                 });
     }
 

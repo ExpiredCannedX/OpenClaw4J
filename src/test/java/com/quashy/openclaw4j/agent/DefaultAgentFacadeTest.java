@@ -13,6 +13,9 @@ import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.memory.LocalMemoryService;
+import com.quashy.openclaw4j.memory.index.SqliteMemoryIndexer;
+import com.quashy.openclaw4j.memory.store.MarkdownMemoryStore;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationEvent;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
@@ -25,6 +28,8 @@ import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
 import com.quashy.openclaw4j.tool.runtime.DefaultToolExecutor;
 import com.quashy.openclaw4j.tool.runtime.LocalToolRegistry;
 import com.quashy.openclaw4j.tool.builtin.time.TimeTool;
+import com.quashy.openclaw4j.tool.builtin.memory.MemoryRememberTool;
+import com.quashy.openclaw4j.tool.builtin.memory.MemorySearchTool;
 import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.api.ToolExecutor;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
@@ -37,8 +42,11 @@ import com.quashy.openclaw4j.workspace.WorkspaceFileContent;
 import com.quashy.openclaw4j.workspace.WorkspaceLoader;
 import com.quashy.openclaw4j.workspace.WorkspaceSnapshot;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -273,6 +281,142 @@ class DefaultAgentFacadeTest {
     }
 
     /**
+     * 模型请求 `memory.search` 时，系统必须返回结构化命中并把相对路径与片段预览注入最终回复阶段。
+     */
+    @Test
+    void shouldExecuteMemorySearchToolAndIncludeStructuredMatchesBeforeFinalReply(@TempDir Path workspaceRoot) throws Exception {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        Files.writeString(workspaceRoot.resolve("MEMORY.md"), """
+                # 长期记忆
+
+                - 用户喜欢黑咖啡
+                  - written_at: 2026-04-04T10:15:30+08:00
+                  - channel: dev
+                  - trigger_reason: user_confirmed
+                """);
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision("memory.search", Map.of(
+                "query", "黑咖啡",
+                "scope", "all"
+        )));
+        when(modelClient.generateFinalReply(any())).thenReturn("我找到了相关记忆。");
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        ToolRegistry toolRegistry = createMemoryToolRegistry(workspaceRoot, publisher);
+        createMemoryIndexer(workspaceRoot).refreshChangedFiles();
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher,
+                createProperties(workspaceRoot)
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-memory-search"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-memory-search", "msg-memory-search", "帮我回忆一下咖啡偏好"),
+                new TraceContext("run-memory-search", "dev", "dm-memory-search", "msg-memory-search", "conversation-memory-search", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: memory.search")
+                .contains("MEMORY.md")
+                .contains("黑咖啡");
+        assertThat(replyEnvelope.body()).isEqualTo("我找到了相关记忆。");
+    }
+
+    /**
+     * 模型请求 `memory.remember` 成功时，系统必须完成写入并把目标桶与相对路径元数据回填给最终回复阶段。
+     */
+    @Test
+    void shouldExecuteMemoryRememberToolAndIncludeStructuredWriteMetadataBeforeFinalReply(@TempDir Path workspaceRoot) throws Exception {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision("memory.remember", Map.of(
+                "target", "long_term",
+                "content", "用户每周五下午会安排复盘",
+                "reason", "user_confirmed"
+        )));
+        when(modelClient.generateFinalReply(any())).thenReturn("我已经记住了。");
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        ToolRegistry toolRegistry = createMemoryToolRegistry(workspaceRoot, publisher);
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher,
+                createProperties(workspaceRoot)
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-memory-remember"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-memory-remember", "msg-memory-remember", "请记住这个习惯"),
+                new TraceContext("run-memory-remember", "dev", "dm-memory-remember", "msg-memory-remember", "conversation-memory-remember", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: memory.remember")
+                .contains("relativePath=MEMORY.md")
+                .contains("targetBucket=long_term");
+        assertThat(Files.readString(workspaceRoot.resolve("MEMORY.md"))).contains("用户每周五下午会安排复盘");
+        assertThat(replyEnvelope.body()).isEqualTo("我已经记住了。");
+    }
+
+    /**
+     * memory 工具参数错误时，系统必须把 invalid_arguments 结果注入最终回复阶段，而不是直接中断主链路。
+     */
+    @Test
+    void shouldConvertInvalidMemoryRememberArgumentsIntoStructuredObservation(@TempDir Path workspaceRoot) {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision("memory.remember", Map.of(
+                "target", "user_profile",
+                "category", "temporary_plan",
+                "content", "下周写完路线图",
+                "reason", "model_inferred"
+        )));
+        when(modelClient.generateFinalReply(any())).thenReturn("这条记忆不适合写入。");
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        ToolRegistry toolRegistry = createMemoryToolRegistry(workspaceRoot, publisher);
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher,
+                createProperties(workspaceRoot)
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-memory-invalid"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-memory-invalid", "msg-memory-invalid", "请记住一条临时计划"),
+                new TraceContext("run-memory-invalid", "dev", "dm-memory-invalid", "msg-memory-invalid", "conversation-memory-invalid", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: memory.remember")
+                .contains("status: error")
+                .contains("error_code: invalid_arguments");
+        assertThat(replyEnvelope.body()).isEqualTo("这条记忆不适合写入。");
+    }
+
+    /**
      * 规划阶段模型调用失败时必须回退到统一兜底回复，避免把底层异常暴露给渠道层。
      */
     @Test
@@ -333,7 +477,15 @@ class DefaultAgentFacadeTest {
             ToolRegistry toolRegistry,
             ToolExecutor toolExecutor
     ) {
-        return createFacade(workspaceLoader, turnRepository, modelClient, toolRegistry, toolExecutor, new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF));
+        return createFacade(
+                workspaceLoader,
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                toolExecutor,
+                new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF),
+                createProperties(Path.of("workspace"))
+        );
     }
 
     /**
@@ -347,6 +499,21 @@ class DefaultAgentFacadeTest {
             ToolExecutor toolExecutor,
             RuntimeObservationPublisher observationPublisher
     ) {
+        return createFacade(workspaceLoader, turnRepository, modelClient, toolRegistry, toolExecutor, observationPublisher, createProperties(Path.of("workspace")));
+    }
+
+    /**
+     * 允许测试显式指定 workspace 根路径，便于 memory 工具直接操作临时目录中的真实文件与索引。
+     */
+    private DefaultAgentFacade createFacade(
+            WorkspaceLoader workspaceLoader,
+            InMemoryConversationTurnRepository turnRepository,
+            AgentModelClient modelClient,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            RuntimeObservationPublisher observationPublisher,
+            OpenClawProperties properties
+    ) {
         return new DefaultAgentFacade(
                 workspaceLoader,
                 new AgentPromptAssembler(),
@@ -355,15 +522,45 @@ class DefaultAgentFacadeTest {
                 modelClient,
                 toolRegistry,
                 toolExecutor,
-                new OpenClawProperties(
-                        "workspace",
-                        4,
-                        "系统暂时繁忙，请稍后再试。",
-                        new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
-                        new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
-                        new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
-                ),
+                properties,
                 observationPublisher
+        );
+    }
+
+    /**
+     * 为 memory 集成测试构造真实工具目录，确保 Agent Core 经过 executor 走到文件写入和索引查询闭环。
+     */
+    private ToolRegistry createMemoryToolRegistry(Path workspaceRoot, RuntimeObservationPublisher observationPublisher) {
+        LocalMemoryService memoryService = new LocalMemoryService(
+                new MarkdownMemoryStore(workspaceRoot, fixedClock()),
+                createMemoryIndexer(workspaceRoot),
+                observationPublisher
+        );
+        return new LocalToolRegistry(List.of(
+                new MemorySearchTool(memoryService),
+                new MemoryRememberTool(memoryService)
+        ));
+    }
+
+    /**
+     * 为 memory 集成测试创建固定时钟的 SQLite indexer，确保写入时间和 session 文件命名可稳定断言。
+     */
+    private SqliteMemoryIndexer createMemoryIndexer(Path workspaceRoot) {
+        return new SqliteMemoryIndexer(workspaceRoot, workspaceRoot.resolve(".openclaw/memory-index.sqlite"), fixedClock());
+    }
+
+    /**
+     * 为测试构造包含 memory 索引配置的集中配置对象，避免每个用例重复手写默认值。
+     */
+    private OpenClawProperties createProperties(Path workspaceRoot) {
+        return new OpenClawProperties(
+                workspaceRoot.toString(),
+                4,
+                "系统暂时繁忙，请稍后再试。",
+                new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
+                new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
     }
 

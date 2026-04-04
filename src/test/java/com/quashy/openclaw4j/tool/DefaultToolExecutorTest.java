@@ -1,5 +1,10 @@
 package com.quashy.openclaw4j.tool;
 
+import com.quashy.openclaw4j.domain.InternalConversationId;
+import com.quashy.openclaw4j.domain.InternalUserId;
+import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
+import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
 import com.quashy.openclaw4j.tool.model.*;
@@ -10,6 +15,7 @@ import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -72,6 +78,31 @@ class DefaultToolExecutorTest {
     }
 
     /**
+     * 执行器在转发调用时必须保留运行时上下文，避免后续 memory 等工具拿不到用户、会话和渠道来源。
+     */
+    @Test
+    void shouldPassExecutionContextThroughToToolImplementation() {
+        Tool captureContextTool = createCaptureContextTool();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(captureContextTool));
+        ToolExecutionContext executionContext = new ToolExecutionContext(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-1"),
+                new NormalizedDirectMessage("telegram", "external-user-1", "external-conversation-1", "external-message-1", "捕获上下文"),
+                new TraceContext("run-1", "telegram", "external-conversation-1", "external-message-1", "conversation-1", RuntimeObservationMode.OFF),
+                Path.of("workspace")
+        );
+
+        ToolExecutionResult result = new DefaultToolExecutor(toolRegistry).execute(new ToolCallRequest("capture-context", Map.of(), executionContext));
+
+        assertThat(result)
+                .isInstanceOfSatisfying(ToolExecutionSuccess.class, success -> {
+                    assertThat(success.payload()).containsEntry("channel", "telegram");
+                    assertThat(success.payload()).containsEntry("conversationId", "conversation-1");
+                    assertThat(success.payload()).containsEntry("workspaceRoot", Path.of("workspace").toAbsolutePath().normalize().toString());
+                });
+    }
+
+    /**
      * 构造一个最小 echo 工具，用于验证 executor 的成功与参数错误归一化行为。
      */
     private Tool createEchoTool() {
@@ -119,6 +150,31 @@ class DefaultToolExecutorTest {
             @Override
             public Map<String, Object> execute(ToolCallRequest request) {
                 throw new IllegalStateException("boom");
+            }
+        };
+    }
+
+    /**
+     * 构造一个读取执行上下文的工具，用于验证 executor 不会在转发过程中丢失运行时语义。
+     */
+    private Tool createCaptureContextTool() {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        "capture-context",
+                        "回显执行上下文，用于验证 ToolExecutionContext 透传。",
+                        ToolInputSchema.object(Map.of(), List.of())
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                return Map.of(
+                        "channel", request.executionContext().sourceMessage().channel(),
+                        "conversationId", request.executionContext().conversationId().value(),
+                        "workspaceRoot", request.executionContext().workspaceRoot().toString()
+                );
             }
         };
     }

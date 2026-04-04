@@ -27,7 +27,8 @@ class RuntimeObservabilityConfigurationTest {
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
-                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
 
         RuntimeObservationSink sink = configuration.runtimeObservationSink(properties);

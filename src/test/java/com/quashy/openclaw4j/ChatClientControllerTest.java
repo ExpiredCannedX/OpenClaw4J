@@ -31,7 +31,8 @@ class ChatClientControllerTest {
                 "fallback",
                 new OpenClawProperties.DebugProperties("来自配置的默认问题"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
-                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
         ChatClientController controller = new ChatClientController(agentModelClient, properties);
 

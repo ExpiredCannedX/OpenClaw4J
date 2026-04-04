@@ -65,7 +65,8 @@ class DirectMessageControllerTest {
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
-                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160)
+                new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
         DefaultRuntimeObservationPublisher observationPublisher = new DefaultRuntimeObservationPublisher(
                 RuntimeObservationMode.OFF,

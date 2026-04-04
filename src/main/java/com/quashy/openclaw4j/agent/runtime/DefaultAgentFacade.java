@@ -20,6 +20,7 @@ import com.quashy.openclaw4j.repository.ConversationTurnRepository;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.model.ToolExecutionContext;
 import com.quashy.openclaw4j.tool.model.ToolExecutionResult;
 import com.quashy.openclaw4j.tool.api.ToolExecutor;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
@@ -32,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.nio.file.Path;
 
 /**
  * 提供当前 change 所需的最小 Agent 主链路实现，负责 workspace 加载、上下文组装、模型调用和失败兜底。
@@ -220,7 +222,8 @@ public class DefaultAgentFacade implements AgentFacade {
                 // 根据 ToolCallDecision 中的指令，执行相应的工具代码，并获得一个执行结果 (ToolExecutionResult)。
                 ToolExecutionResult observation = toolExecutor.execute(new ToolCallRequest(
                         toolCallDecision.toolName(),
-                        toolCallDecision.arguments()
+                        toolCallDecision.arguments(),
+                        buildToolExecutionContext(request, traceContext)
                 ));
 
                 runtimeObservationPublisher.emit(
@@ -431,5 +434,18 @@ public class DefaultAgentFacade implements AgentFacade {
             return Map.of();
         }
         return Map.of("exceptionMessage", exception.getMessage());
+    }
+
+    /**
+     * 为本次工具调用构造显式执行上下文，使工具能够读取身份、会话、消息来源、trace 和 workspace 根路径等系统事实。
+     */
+    private ToolExecutionContext buildToolExecutionContext(AgentRequest request, TraceContext traceContext) {
+        return new ToolExecutionContext(
+                request.userId(),
+                request.conversationId(),
+                request.message(),
+                traceContext,
+                Path.of(properties.workspaceRoot())
+        );
     }
 }
