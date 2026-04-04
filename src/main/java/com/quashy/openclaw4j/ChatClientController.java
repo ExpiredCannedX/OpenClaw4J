@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j;
 
-import com.quashy.openclaw4j.agent.AgentModelClient;
-import com.quashy.openclaw4j.agent.AgentPrompt;
+import com.quashy.openclaw4j.agent.port.AgentModelClient;
+import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 import com.quashy.openclaw4j.config.OpenClawProperties;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;

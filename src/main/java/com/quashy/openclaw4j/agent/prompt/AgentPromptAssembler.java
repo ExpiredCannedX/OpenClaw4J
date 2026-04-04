@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.prompt;
 
 import com.quashy.openclaw4j.domain.ConversationTurn;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;

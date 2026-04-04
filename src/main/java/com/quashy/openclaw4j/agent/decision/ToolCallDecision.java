@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.decision;
 
 import org.springframework.util.Assert;
 

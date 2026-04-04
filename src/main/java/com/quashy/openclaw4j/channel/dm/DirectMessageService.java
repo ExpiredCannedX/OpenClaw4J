@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.channel.dm;
 
-import com.quashy.openclaw4j.agent.AgentFacade;
-import com.quashy.openclaw4j.agent.AgentRequest;
+import com.quashy.openclaw4j.agent.api.AgentFacade;
+import com.quashy.openclaw4j.agent.api.AgentRequest;
 import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;

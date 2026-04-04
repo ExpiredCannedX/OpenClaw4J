@@ -1,10 +1,11 @@
 package com.quashy.openclaw4j.channel.dm;
 
-import com.quashy.openclaw4j.agent.AgentPrompt;
-import com.quashy.openclaw4j.agent.AgentPromptAssembler;
-import com.quashy.openclaw4j.agent.AgentModelClient;
-import com.quashy.openclaw4j.agent.DefaultAgentFacade;
-import com.quashy.openclaw4j.agent.FinalReplyDecision;
+import com.quashy.openclaw4j.agent.decision.AgentModelDecision;
+import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
+import com.quashy.openclaw4j.agent.prompt.AgentPromptAssembler;
+import com.quashy.openclaw4j.agent.port.AgentModelClient;
+import com.quashy.openclaw4j.agent.runtime.DefaultAgentFacade;
+import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
 import com.quashy.openclaw4j.config.OpenClawProperties;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
@@ -66,7 +67,7 @@ class DirectMessageControllerTest {
              * 对测试请求始终返回最终回复决策，确保 DirectMessageController 能走通新的结构化模型协议。
              */
             @Override
-            public com.quashy.openclaw4j.agent.AgentModelDecision decideNextAction(AgentPrompt prompt) {
+            public AgentModelDecision decideNextAction(AgentPrompt prompt) {
                 return new FinalReplyDecision("已收到：" + prompt.content().contains("你好"));
             }
 

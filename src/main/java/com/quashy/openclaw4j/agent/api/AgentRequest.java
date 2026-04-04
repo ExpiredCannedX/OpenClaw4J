@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.api;
 
 import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;

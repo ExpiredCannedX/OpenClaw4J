@@ -1,4 +1,4 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.prompt;
 
 /**
  * 表示传递给模型层的最小提示词载体，避免调用方直接暴露底层模型 SDK 的输入细节。

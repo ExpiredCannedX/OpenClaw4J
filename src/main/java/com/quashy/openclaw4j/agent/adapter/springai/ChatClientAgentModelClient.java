@@ -1,9 +1,14 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.adapter.springai;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.quashy.openclaw4j.agent.decision.AgentModelDecision;
+import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
+import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
+import com.quashy.openclaw4j.agent.port.AgentModelClient;
+import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;

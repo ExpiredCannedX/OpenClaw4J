@@ -1,4 +1,7 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.port;
+
+import com.quashy.openclaw4j.agent.decision.AgentModelDecision;
+import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 
 /**
  * 抽象 Agent Core 与具体模型 SDK 的边界，统一承载规划决策与最终回复两类模型交互。

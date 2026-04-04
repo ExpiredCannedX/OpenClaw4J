@@ -1,5 +1,12 @@
-package com.quashy.openclaw4j.agent;
+package com.quashy.openclaw4j.agent.runtime;
 
+import com.quashy.openclaw4j.agent.api.AgentFacade;
+import com.quashy.openclaw4j.agent.api.AgentRequest;
+import com.quashy.openclaw4j.agent.decision.AgentModelDecision;
+import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
+import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
+import com.quashy.openclaw4j.agent.port.AgentModelClient;
+import com.quashy.openclaw4j.agent.prompt.AgentPromptAssembler;
 import com.quashy.openclaw4j.config.OpenClawProperties;
 import com.quashy.openclaw4j.domain.ConversationTurn;
 import com.quashy.openclaw4j.domain.InternalConversationId;
