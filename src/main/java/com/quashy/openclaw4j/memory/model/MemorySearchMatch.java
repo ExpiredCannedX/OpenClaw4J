@@ -25,7 +25,7 @@ public record MemorySearchMatch(
          */
         String previewSnippet,
         /**
-         * 承载来自 SQLite FTS 的相关度分数，供上层按命中质量排序或调试。
+         * 承载当前检索实现返回的相关度占位分数，为后续更精细排序保留稳定输出字段。
          */
         double score
 ) {

@@ -24,7 +24,7 @@ import java.util.HexFormat;
 import java.util.List;
 
 /**
- * 负责把 Markdown 事实源同步到本地 SQLite FTS 索引，并提供按范围过滤的最小全文检索能力。
+ * 负责把 Markdown 事实源同步到本地 SQLite 索引，并提供按范围过滤的最小关键词检索能力。
  */
 public class SqliteMemoryIndexer {
 
@@ -93,7 +93,7 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 在本地 FTS 索引上执行查询，并按 scope 过滤目标桶或当前会话相关的 session 日志块。
+     * 在本地 SQLite 索引上执行查询，并按 scope 过滤目标桶或当前会话相关的 session 日志块。
      */
     public List<MemorySearchMatch> search(MemorySearchRequest request) {
         try (Connection connection = openConnection()) {
@@ -271,7 +271,7 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 把普通块内容同步写入 FTS5 虚表，确保查询阶段能够直接使用 bm25 排序。
+     * 把普通块内容同步写入 FTS5 虚表，为后续增强检索保留一致的索引结构。
      */
     private void insertChunkFts(Connection connection, long chunkId, Chunk chunk) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
@@ -497,7 +497,7 @@ public class SqliteMemoryIndexer {
              */
             int lineEnd,
             /**
-             * 承载真正参与全文检索的块文本，包含最近节标题以提升可读性。
+             * 承载当前关键词检索复用的块文本，并包含最近节标题以提升结果可读性。
              */
             String content,
             /**

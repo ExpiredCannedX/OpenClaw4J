@@ -8,7 +8,7 @@ import org.springframework.util.Assert;
  */
 public record MemorySearchRequest(
         /**
-         * 承载需要在本地索引中做全文匹配的关键词或短语。
+         * 承载需要在本地索引中做关键词匹配的关键词或短语。
          */
         String query,
         /**

@@ -33,7 +33,7 @@ public class LocalMemoryService {
     private final MarkdownMemoryStore memoryStore;
 
     /**
-     * 负责把 Markdown 事实源刷新到 SQLite，并提供最小 FTS 检索能力。
+     * 负责把 Markdown 事实源刷新到 SQLite，并提供最小关键词检索能力。
      */
     private final SqliteMemoryIndexer memoryIndexer;
 

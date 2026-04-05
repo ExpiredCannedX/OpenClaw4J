@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 提供 `memory.search` 内置工具，使模型能够在本地 SQLite FTS 索引上执行最小范围控制的全文检索。
+ * 提供 `memory.search` 内置工具，使模型能够在本地 SQLite 索引上执行最小范围控制的关键词检索。
  */
 @Component
 public class MemorySearchTool implements Tool {
@@ -39,7 +39,7 @@ public class MemorySearchTool implements Tool {
     public ToolDefinition definition() {
         return new ToolDefinition(
                 "memory.search",
-                "在本地 SQLite FTS 记忆索引中按关键词检索，并返回结构化匹配列表。",
+                "在本地 SQLite 记忆索引中按关键词检索，并返回结构化匹配列表。",
                 ToolInputSchema.object(
                         Map.of(
                                 "query", new ToolInputProperty("string", "需要检索的关键词或短语。"),
