@@ -16,279 +16,202 @@
 - 可解释与可追踪：Skill 自动激活、记忆写入、工具失败都必须可追踪、可恢复、可审计。
 - 注释优先：编码时必须编写清晰注释，类注释说明职责、使用场景与边界；方法注释说明为什么这样做、如何做、关键约束与必要的实现意图。
 
-## 核心能力
+## 状态约定
+- 当前已归档能力：已经沉淀到 `openspec/specs/**` 主 spec，可视为当前系统契约或已确认的能力边界。
+- Roadmap 目标：方向性目标、后续阶段计划或待实现能力，不等同于当前实现，也不等同于当前稳定契约。
+- 非目标 / 延后项：当前阶段明确不承诺的内容，只有在后续 change 明确提出后才进入当前契约。
+
+## 当前已归档能力总览
+- `single-dm-channel`：开发用单聊入口、真实渠道入口抽象、内部消息标准化、内外部身份映射、活跃会话复用与幂等去重。
+- `single-dm-agent-core`：统一 Agent 入口、`ReplyEnvelope(body + signals)`、最近会话与 workspace 上下文组装、至多一次同步工具闭环、最终一次性回复与失败兜底。
+- `workspace-bootstrap`：`SOUL.md`、`SKILLS.md`、`USER.md`、`MEMORY.md` 的基础加载，静态规则 / 动态记忆 / 本地 Skill 文档分层，以及 `skills/**/SKILL.md` 的稳定发现。
+- `skill-resolution`：`SKILL.md` front matter 解析、显式 Skill 优先、保守自动匹配、单次请求最多选择一个 Skill。
+- `tool-system`：统一工具定义、唯一命名注册中心、同步执行器、结构化成功/失败结果、内置 `time` 工具。
+- `runtime-observability`：运行期观测模式、run 级 trace identity、稳定生命周期事件、console sink、按模式裁剪负载。
+- `telegram-dm-adapter`：Telegram webhook 鉴权、私聊文本 update 翻译、最终一次性文本回复回传。
+- `agent-memory`：单用户 workspace 记忆体系、`USER.md` 白名单写入、本地 SQLite 索引、`memory.search`、`memory.remember`，以及显式 FTS5 tokenizer 策略。
+
+## 核心能力分层
 
 ### 1. Gateway / Channel
-- 统一的渠道入口与消息路由。
-- 统一的输入输出消息模型。
-- 渠道 adapter 负责签名校验、事件接收、消息发送、重试与错误转换。
-- 至少一个可运行 IM/Bot 渠道。
-- V1 只支持单聊语义。
-- 每个渠道都要支持：
-- 接收消息。
-- 发送最终一次性回复。
-- 识别用户、会话、消息。
-- 去重和幂等处理。
-- 渠道原生 ID 映射到平台无关的内部标准 ID。
-- 平台无关的内部标准 ID + 外部映射表。
-- 单聊默认“同一渠道同一用户复用一个活跃会话，记忆连续”。
+**当前已归档能力**
+- 系统已经具备开发用单聊入口和至少一个真实渠道入口的统一接入边界。
+- 外部消息会被标准化为内部消息模型，再进入统一 Agent 入口。
+- 渠道原生 `user_id`、`conversation_id`、`message_id` 已通过外部映射绑定到平台无关的内部标准 ID。
+- 单聊场景下默认复用“同一渠道同一用户”的活跃会话。
+- 渠道层已支持幂等去重，避免同一外部消息重复触发 Agent。
+- Telegram 私聊文本消息已完成 webhook-first 接入、鉴权和最终一次性文本回复回传。
+
+**Roadmap 目标**
+- 接入更多真实渠道 adapter，例如飞书、QQ、微信等。
+- 在不破坏统一内部模型的前提下，逐步支持更多消息类型和更丰富的回复语义。
+- 继续保持单聊优先，不提前把群聊、频道、线程楼层等复杂语义塞进 V1 主链路。
 
 ### 2. Agent Core
-- 一个统一的 Agent 入口。
-- 采用 `Load -> Think -> Act -> Observe -> Learn -> Reply` 执行循环。
-- 上下文组装能力。
-- 模型调用和决策能力。
-- Skill 解析与选择能力。
-- Tool 调用编排能力。
-- Learn 阶段的记忆与经验写回能力。
-- 最终回复生成能力。
-- 基础能力至少包括：
-- 单轮问答。
-- 多轮会话。
-- 系统提示词。
-- 错误兜底回复。
-- 超时和重试。
-- 最终一次性回复。
+**当前已归档能力**
+- 系统已经具备统一的 Agent 入口，输入标准化单聊请求，输出结构化 `ReplyEnvelope`。
+- 当前上下文组装边界已经明确，包括 workspace 内容、选中的 Skill、最近会话、工具目录，以及工具执行后的结构化观察结果。
+- 当前请求内最多允许一次同步工具调用，再收敛为一条最终一次性回复。
+- 模型失败、工具失败或工具不可用时，系统会转换为结构化观察或安全兜底回复，而不是把原始异常抛给渠道层。
+- 当前 Reply 模型锁定为 one-shot final reply，不支持流式 token、消息编辑或中途进度推送。
+
+**Roadmap 目标**
+- 把执行循环逐步扩展到更完整的 `Load -> Think -> Act -> Observe -> Learn -> Reply`。
+- 引入真正的 Learn 阶段写回，而不是只停留在工具观察和当前 memory foundation。
+- 支持更复杂的工具编排、多步决策和后续上下文压缩能力。
 
 ### 3. Workspace
-- 每个 Agent 拥有独立本地 workspace。
-- Workspace 是 Agent 的灵魂和长期资产。
-- Workspace 以 Markdown 文件为主，以 SQLite 为索引与检索层。
-- V1 必须支持的核心文件：
-- `SOUL.md`
-- `USER.md`
-- `SKILLS.md`
-- `LEARNINGS.md`
-- `ERRORS.md`
-- `MEMORY.md`
-- `memory/*.md`
-- 可预留但 V1 不强依赖：
-- `AGENTS.md`
-- 静态规则文件与动态记忆文件要区分管理。
-- V1 默认不允许模型自动改写高风险静态规则文件：
-- `SOUL.md`
-- `AGENTS.md`
-- `SKILLS.md`
+**当前已归档能力**
+- Workspace 已被明确为 Agent 的本地长期资产，并且当前 bootstrap 只保证最小上下文装配所需文件。
+- 当前主 spec 认定的最小核心文件为 `SOUL.md`、`SKILLS.md`、`USER.md`、`MEMORY.md`。
+- 当前本地 Skill 发现路径为 `skills/**/SKILL.md`，并且会和静态规则、动态记忆分开管理。
+- `memory/*.md` 已经进入 memory 事实源和索引范围，但不是 bootstrap 阶段自动注入的核心上下文文件。
+- 缺失的可选文件或目录不会导致请求失败，只会被视为空上下文。
+- 当前阶段默认不允许模型自动改写高风险静态规则文件，如 `SOUL.md`、`SKILLS.md`、`AGENTS.md`。
+
+**Roadmap 目标**
+- 将 `AGENTS.md`、`LEARNINGS.md`、`ERRORS.md` 等文件纳入更完整的 workspace 文件体系。
+- 继续细化“静态规则 / 动态记忆 / 经验沉淀 / 委派策略”的文件职责边界。
+- 在不破坏文件驱动哲学的前提下，补齐更多受控写回与治理规则。
 
 ### 4. Skill System
-- Skill 是方法论、规则、SOP、模板与最佳实践，不直接替代 Tool。
-- 支持本地 Skill 发现与加载。
-- 支持 `SKILL.md` 元数据解析。
-- 支持用户显式指定 Skill。
-- 支持基于关键词/规则的自动匹配推荐。
-- Skill 优先级链：
-- 用户显式指定 Skill
-- workspace 自定义 Skill
-- 内置 Skill
-- 无 Skill
-- 自动匹配结果必须经过 resolver 裁剪，避免 prompt 膨胀和 Skill 冲突。
-- V1 自动匹配基于关键词/规则，不做语义召回。
-- 显式指定 Skill 直接激活。
-- 自动匹配 Skill 默认允许自动激活，但要保守控制数量与冲突。
-- V1 默认最多自动激活 1 个 Skill。
-- Skill 自动激活后必须产生结构化 `skill_applied` signal。
-- 同一 Skill 在同一会话中连续命中默认只提示一次。
-- Skill 变化时必须重新提示。
-- 后续版本应支持渐进式 Skill 加载机制，以降低上下文膨胀风险并提升 Skill 数量扩展能力。
-- 渐进式 Skill 加载至少分为三层：
-- 启动注入层（Discovery）：启动时仅向模型暴露 Skill 目录摘要，例如 `name`、`description` 与必要关键词，不默认注入完整 Skill 正文。
-- 任务匹配层（Activation）：当模型或系统判断当前任务需要某个 Skill 时，再激活目标 Skill 并加载详细指令层内容。
-- 执行支撑层（Execution）：仅在实际执行需要时，再加载 Skill 的附属资源、模板、工具权限或扩展上下文，避免一次性注入全部内容。
-- 渐进式加载场景下，Skill 目录、激活结果和执行期附加加载都必须保留 provenance 与可解释记录。
-- 渐进式 Skill 加载属于 V2+ 演进方向，不替代 V1 当前的显式指定与关键词/规则匹配主流程。
+**当前已归档能力**
+- 系统已支持本地 `SKILL.md` front matter 解析，识别 `name`、`description`、`keywords` 等规范字段，并忽略未知字段。
+- 当前显式 Skill 选择优先于自动匹配。
+- 当前自动匹配仍是保守策略，只基于关键词规则，不做语义召回。
+- 当前一次请求内最多自动匹配一个 Skill。
+- 当前只要成功选中 Skill，就会产生结构化 `skill_applied` signal。
+
+**Roadmap 目标**
+- 明确完整的 Skill 优先级链，例如“用户显式指定 > workspace 自定义 > 内置 Skill > 无 Skill”。
+- 增加同一会话连续命中时的 signal 去重策略。
+- 建立渐进式 Skill 加载机制，区分 Discovery、Activation、Execution 三层。
+- 后续如需要，再评估更复杂的匹配、裁剪和冲突消解机制。
 
 ### 5. Tool System
-- 统一 Tool API：
-- 工具名称
-- 参数模式
-- 返回结构
-- 错误结构
-- 本地工具定义机制。
-- 工具注册中心。
-- 工具执行器。
-- 模型可见的工具描述与 schema。
-- 工具执行结果结构化回填给模型。
-- 支持内置工具与基于 MCP 的外部工具接入。
-- Agent Core 不直接依赖 MCP 协议，而统一通过 Tool System 调用工具。
-- V1 仅支持同步请求-响应型工具。
-- V1 不支持异步工具、后台任务句柄、进度流或回调通知。
-- V1 的 MCP 集成范围仅限 Tool Discovery 与 Tool Invocation，不要求支持 Resource、Prompt 等非工具能力。
-- V1 内置工具最小集合：
-- `time`
-- `memory.search`
-- `memory.remember`
-- `reminder.create`
+**当前已归档能力**
+- 当前 Tool System 已具备统一 Tool API，包括工具名、描述、输入 schema、成功结果和错误结果。
+- 当前已具备唯一命名的工具注册中心和同步执行器。
+- 当前 Agent Core 已能把可用工具目录暴露给模型，并在一次请求内完成“决策 -> 执行一次工具 -> 回填观察 -> 最终回复”的最小闭环。
+- 当前已归档的本地工具包括 `time`、`memory.search`、`memory.remember`。
+- 当前阶段仍明确限制为同步请求-响应型工具，不支持异步工具、后台句柄或进度流。
+
+**Roadmap 目标**
+- 补齐 `reminder.create` 等业务工具。
+- 补齐 MCP Tool Discovery / Invocation 接入，但仍不要求 Resource、Prompt 等非工具能力。
+- 逐步扩展更多业务工具，并在需要时再评估异步工具协议。
 
 ### 6. Memory / Retrieval
-- 采用双层记忆：
-- `User Profile Memory`
-- `Conversation History Memory`
-- 用户与会话关系允许一对多。
-- V1 单聊策略为“同一渠道同一用户唯一活跃会话”，但模型层必须允许历史会话归档与切换。
-- 当前版本的 workspace 明确锁定为单用户，因此根级 `USER.md` 可以承载该唯一用户的稳定画像并允许受控自动写入；若未来一个 workspace 需要服务多个真实用户，则用户级记忆必须演进为按内部用户分区的存储，而不能继续共享单一根级文件。
-- 用户级记忆存放跨会话稳定信息：
-- 称呼
-- 偏好
-- 习惯
-- 禁忌
-- 稳定约束
-- 会话级记忆存放当前对话历史、摘要与最近意图。
-- 长期记忆默认保守，显式触发优先。
-- 自动写入仅允许白名单低风险字段。
-- `USER.md` 的自动写入只允许高稳定度画像字段，例如称呼、明确偏好、长期习惯、禁忌和稳定约束，不允许把一次性任务、短期计划或未确认推断写入其中。
-- `MEMORY.md` 承载不适合进入 `USER.md` 画像结构、但仍需要跨会话保留的长期事实与决策。
-- `memory/*.md` 承载按日追加的会话级临时记忆、事件和上下文片段。
-- 所有长期记忆写入都必须记录来源、时间、渠道、触发原因与可选置信度。
-- Memory V1（当前建议范围）最小只做：
-- `memory.search`
-- `memory.remember`
-- `USER.md`
-- `MEMORY.md`
-- `memory/*.md`
-- 本地 SQLite 单文件索引。
-- 最小 FTS 全文检索。
-- 显式触发优先写入。
-- 允许对 `USER.md` 做白名单约束下的自动写入。
-- 写后同步重建受影响文件的索引。
-- 暂不包含：
-- `update`
-- `forget`
-- `event log`
-- `LEARNINGS.md` / `ERRORS.md` 自动写回
-- 向量检索 / 混合检索 / 时间衰减
-- FSWatcher 自动增量重索引
-- 自动大规模写回 / 复杂 profile merge
-- 预压缩记忆冲刷 / 上下文压缩
-- Memory V2+ 再支持：
-- `remember`
-- `search`
-- `update`
-- `forget`
-- `event log`
-- 长期记忆文件体系最终可包括：
-- `USER.md`
-- `LEARNINGS.md`
-- `ERRORS.md`
-- `MEMORY.md`
-- `memory/*.md`
-- 检索层采用 SQLite，本地单文件部署。
-- V1 至少支持 FTS 全文检索。
-- 后续支持混合检索：
-- FTS5 关键词检索
-- sqlite-vec 向量检索
-- 向量与关键词结果的去重与分数归一化
-- 时间衰减规则
-- 增量索引
-- 检索结果用于辅助上下文组装，不等于直接写回长期记忆。
+**当前已归档能力**
+- 当前 workspace 明确锁定为单用户，根级 `USER.md` 可以承载该唯一用户的稳定画像。
+- 当前记忆体系已分层为 `USER.md`、`MEMORY.md` 和 `memory/YYYY-MM-DD.md`。
+- 当前 `USER.md` 写入只允许白名单稳定画像类别，不允许把短期计划或未确认推断写进去。
+- 当前记忆 provenance 来自运行时上下文，而不是模型传参。
+- 当前已具备本地 SQLite 单文件索引，事实源仍是 Markdown 文件。
+- 当前 `memory.search` 已升级为“可匹配长词走 FTS5 `MATCH` 主路径，过短查询项走确定性 substring fallback”的检索模型。
+- 当前 memory 索引具备显式 FTS tokenizer 策略、schema version 判定和旧索引整体重建能力。
+- 当前 `memory.search` 会保留 scope 过滤，并返回带正向 score 的结构化结果。
+- 当前 `memory.remember` 写入成功后会同步刷新受影响文件的索引。
+- 当前检索结果只通过显式工具调用回填，不会自动注入 bootstrap 或 planning prompt。
+
+**Roadmap 目标**
+- 增加 `memory.update`、`memory.forget`、`memory.get`、`event log` 等更完整的记忆操作能力。
+- 引入向量检索、混合检索、分数归一化、时间衰减与更细粒度的增量索引。
+- 评估是否需要 watcher、上下文自动注入、摘要压缩和更复杂的 profile merge。
+- 把 `LEARNINGS.md`、`ERRORS.md` 的经验性写回纳入更完整的 Learn 阶段，而不是混入当前 memory V1 foundation。
 
 ### 7. Scheduler
-- 一次性提醒。
-- cron 提醒。
-- 后台 heartbeat。
-- 定时任务状态持久化。
-- 提醒触发后按内部 `ConversationId` 回到正确渠道发送消息。
-- Scheduler 与 Channel 之间通过内部会话映射解耦。
+**当前已归档能力**
+- 当前还没有已归档的 Scheduler 主能力。
+
+**Roadmap 目标**
+- 提供一次性提醒、cron 提醒、后台 heartbeat 和定时任务状态持久化。
+- 让提醒触发后能按内部 `ConversationId` 回到正确渠道发送消息。
+- 保持 Scheduler 与 Channel 之间通过内部会话映射解耦。
 
 ### 8. Reply / Signal Model
-- Agent 回复必须采用统一结构化 `ReplyEnvelope`。
-- V1 的 `ReplyEnvelope` 采用 `body + signals` 极简模型。
-- `body` 只承载用户可读正文。
-- `signals` 承载结构化系统语义。
-- Skill 自动激活时必须生成 `skill_applied` signal。
-- 渠道层负责将 signal 渲染为平台能力允许的结构化提示，不能渲染时降级为标准文本。
-- 同一 Skill 在同一会话中连续命中默认只提示一次。
-- 结构化 signal 不应污染正文、摘要和长期检索语料。
-- V1 先只支持最终一次性回复。
-- V1 不支持流式 token、进度事件、消息编辑或中途状态推送。
+**当前已归档能力**
+- 当前回复协议已经锁定为统一结构化 `ReplyEnvelope`。
+- 当前 `ReplyEnvelope` 采用 `body + signals` 极简模型。
+- 当前系统已明确把 runtime observation 与用户可见 reply payload 分离。
+- 当前 `skill_applied` 是已经存在的结构化 signal。
+- 当前 reply 仍然只支持最终一次性回复。
+
+**Roadmap 目标**
+- 继续扩展更多结果级 signal，而不是把系统语义混入正文。
+- 在各渠道 adapter 中逐步补齐 signal 的平台化渲染与降级策略。
+- 如后续确有必要，再评估 richer reply blocks 或更复杂的用户可见结构。
 
 ### 9. Ops / Safety
-- 配置中心化。
-- API Key / Token 环境变量化。
-- 日志和 tracing。
-- 健康检查。
-- 工具失败恢复。
-- 模型空响应恢复。
-- 记忆写回失败恢复。
-- 索引失败恢复。
-- Skill 选择与记忆写入的 provenance 留痕。
-- 对高风险外部操作做确认。
-- Bootstrap 加载时限制 Markdown 体积，避免上下文膨胀。
-- 支持文件变更后的增量索引。
+**当前已归档能力**
+- 当前运行期可观测性已具备 `OFF / ERRORS / TIMELINE / VERBOSE` 模式，并默认使用摘要 timeline 模式。
+- 当前每次消息处理都具备 run-scoped trace identity。
+- 当前系统已在 ingress、agent、tool、reply dispatch 和 failure 边界上发出结构化生命周期事件。
+- 当前已具备 pluggable sink 抽象与 console sink。
+- 当前详细负载暴露会按观测模式裁剪，不会默认泄漏完整 prompt、workspace 或原始模型输出。
+- 当前 memory 写入、memory 检索、索引刷新与工具失败已经具备明确的失败边界和观测留痕。
+
+**Roadmap 目标**
+- 继续补齐健康检查、更多 sink、事件持久化与更系统化的运维面。
+- 把高风险外部操作确认、审计策略和更完整的安全治理做成稳定能力。
+- 在不破坏本地优先原则的前提下，逐步扩展更成熟的恢复与治理机制。
 
 ## 核心数据与身份策略
-- `ConversationId` 必须使用平台无关的内部标准 ID。
-- 渠道原生 `user_id`、`conversation_id`、`message_id` 通过外部映射表绑定到内部实体。
-- `User -> Conversation` 允许一对多。
-- V1 单聊默认同一渠道同一用户只保留一个活跃会话。
-- 历史会话应可归档，不通过覆盖旧会话实现“重新开始”。
-- V1 不做人类意义上的跨渠道同一用户自动合并。
+**当前已归档能力**
+- `ConversationId` 已明确使用平台无关的内部标准 ID。
+- 渠道原生 `user_id`、`conversation_id`、`message_id` 已通过外部映射绑定到内部实体。
+- 当前单聊默认同一渠道同一用户只保留一个活跃会话。
+- 历史会话应通过归档或切换处理，而不是覆盖旧会话。
+
+**Roadmap 目标**
+- 在不破坏现有映射模型的前提下，扩展更完整的历史会话管理与恢复能力。
+- 继续保持 V1 不做人类意义上的跨渠道同一用户自动合并。
 
 ## 上下文组装顺序
-- `SOUL.md` 与静态规则。
-- 选中的 Skill。
-- 用户级记忆。
-- 当前会话摘要。
-- 最近若干轮对话。
-- 检索召回的长期记忆。
-- 工具上下文。
+**当前已归档能力**
+- 当前上下文组装以 `SOUL.md`、`SKILLS.md`、选中的 Skill、动态记忆、最近会话和工具目录为核心。
+- 当前工具执行后会把结构化工具观察结果回填到最终回复阶段。
+- 当前显式 `memory.search` 的结果属于工具观察，而不是自动检索召回注入。
 
-## 推荐分阶段实现
+**Roadmap 目标**
+- 在后续 change 中继续讨论“当前会话摘要”“长期记忆召回”“自动注入策略”和“上下文压缩”的更完整排序。
+- 只有当相关能力被新的主 spec 明确后，才把自动检索召回写成当前契约。
 
-### P0：最小可用单聊 Agent
-- 一个 IM/Bot 渠道 adapter。
-- 统一消息模型与内部 ID 映射。
-- Agent Core 基础执行循环。
-- `SOUL.md`、`USER.md`、`MEMORY.md` 的基础加载。
-- 多轮上下文。
-- 最终一次性回复。
-- 基础错误兜底。
+## Roadmap 分阶段目标
 
-### P1：像 Agent 的版本
-- Skill System（显式指定 + 关键词/规则自动匹配）。
-- 同步 Tool System（内置工具 + MCP Tool 接入）。
-- 双层记忆。
+### 已归档覆盖范围
+- 当前已基本覆盖 P0 的单聊主链路、统一 Agent 入口、基础 workspace 加载、最终一次性回复和基础错误兜底。
+- 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation，以及 `memory.search` 的 FTS 升级。
+
+### P1 剩余目标
+- `reminder.create` 与 Scheduler。
 - `LEARNINGS.md`、`ERRORS.md` 写回。
-- Reminder / Scheduler。
-- FTS 全文检索。
-- 简单 ReAct tool calling。
+- MCP Tool 接入。
+- 更完整的 Learn 阶段闭环。
 
-### P2：像 OpenClaw 的版本
+### P2 目标
 - 第二个渠道 adapter。
-- 完整 workspace 文件体系。
-- Skill Catalog 与渐进式加载基础设施：
-- 启动注入层目录构建。
-- Skill 激活协议与二阶段加载。
-- 混合检索：
-- FTS5
-- sqlite-vec
-- 去重与分数归一化
-- 时间衰减与增量索引。
+- 更完整的 workspace 文件体系。
+- Skill Catalog 与渐进式加载基础设施。
+- 混合检索，包括 FTS5、sqlite-vec、去重、分数归一化和时间衰减。
 - 更完整的可观测性与安全机制。
 
-### P3：增强版
+### P3 目标
 - 多渠道统一行为。
 - 更强的工具编排。
 - 多 Agent 协作。
 - `AGENTS.md` 驱动的委派策略。
-- Skill 执行支撑层增强：
-- 执行期资源懒加载。
-- Skill 级工具权限与附加上下文控制。
+- Skill 执行支撑层增强。
 - 更成熟的 profile / persona 演进。
 - 更完整的部署和运维能力。
 
-## 实现顺序建议
-1. Gateway / Channel 基础。
-2. 统一消息模型与内部 ID 映射。
-3. Agent Core。
-4. Workspace 基础加载。
-5. ReplyEnvelope 与 signal 渲染。
-6. Skill System。
-7. 双层记忆。
-8. Tool System。
-9. Scheduler。
-10. 第二个渠道 adapter。
-11. 混合检索。
-12. 更完整的 Ops / Safety。
+## 建议实现顺序（Roadmap）
+1. 补齐 Scheduler / `reminder.create`。
+2. 收敛 Learn 阶段边界，明确 `LEARNINGS.md` / `ERRORS.md` 的写回策略。
+3. 引入 MCP Tool 接入。
+4. 接入第二个真实渠道 adapter。
+5. 推进混合检索和更完整的记忆演进能力。
+6. 视需要再扩展多 Agent 协作与更复杂的 Skill 执行支撑。
 
 ## 非目标
 - V1 不做 ClaudeCode 风格的 workspace runtime。

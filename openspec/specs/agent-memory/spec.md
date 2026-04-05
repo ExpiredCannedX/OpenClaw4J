@@ -49,7 +49,7 @@ The system SHALL persist provenance with each written memory entry, including wr
 - **THEN** the system ignores those values and uses the current execution context instead
 
 ### Requirement: System maintains a local SQLite index for memory files
-The system SHALL maintain a local SQLite single-file index derived from `USER.md`, `MEMORY.md`, and `memory/*.md`, and SHALL support keyword retrieval over indexed memory chunks.
+The system SHALL maintain a local SQLite single-file index derived from `USER.md`, `MEMORY.md`, and `memory/*.md`, and SHALL support keyword retrieval over indexed memory chunks using an explicit FTS5 tokenizer strategy that is stable across rebuilds.
 
 #### Scenario: Startup refreshes changed memory files
 - **WHEN** the service starts and one or more memory files are new or have changed since the last successful index build
@@ -63,16 +63,24 @@ The system SHALL maintain a local SQLite single-file index derived from `USER.md
 - **WHEN** one or more optional memory files or the `memory/` directory are absent during index initialization
 - **THEN** the system skips the missing inputs and continues initializing the local index
 
-### Requirement: System provides a memory.search tool
-The system SHALL provide a synchronous built-in tool named `memory.search` that performs keyword retrieval against the local SQLite index and returns structured matches instead of raw file contents.
+#### Scenario: FTS tokenizer strategy is recreated deterministically
+- **WHEN** the configured FTS5 tokenizer or search schema version differs from the existing local SQLite index
+- **THEN** the system rebuilds the derived search index with the configured tokenizer before serving `memory.search`
 
-#### Scenario: Search returns structured matches
-- **WHEN** `memory.search` is invoked with a non-empty query that matches indexed memory
-- **THEN** the system returns a structured success result containing matches with relative file path, line range, preview snippet, target bucket, and score metadata
+### Requirement: System provides a memory.search tool
+The system SHALL provide a synchronous built-in tool named `memory.search` that performs keyword retrieval against the local SQLite index, uses FTS5 `MATCH` as the primary retrieval path for matchable query terms, preserves scope filtering, and returns structured matches instead of raw file contents.
+
+#### Scenario: Search returns structured matches ordered by FTS relevance
+- **WHEN** `memory.search` is invoked with a non-empty query containing one or more terms supported by the configured FTS tokenizer and indexed memory matches those terms
+- **THEN** the system returns a structured success result containing matches with relative file path, line range, preview snippet, target bucket, and non-constant score metadata ordered by relevance
 
 #### Scenario: Session scope limits search to the current conversation context
 - **WHEN** `memory.search` is invoked with scope `session`
 - **THEN** the system only returns matches from session log entries associated with the current conversation context
+
+#### Scenario: Short query terms remain searchable
+- **WHEN** `memory.search` is invoked with a non-empty query that contains terms too short to be matched by the configured FTS tokenizer
+- **THEN** the system applies deterministic substring fallback for those terms without dropping the active scope filters
 
 #### Scenario: Search with no matches returns an empty result
 - **WHEN** `memory.search` is invoked with a query that matches no indexed memory chunk
@@ -88,3 +96,4 @@ The system SHALL provide a synchronous built-in tool named `memory.remember` tha
 #### Scenario: Invalid remember input is rejected
 - **WHEN** `memory.remember` is invoked with missing content, an unsupported target, or an invalid profile category
 - **THEN** the system returns a structured invalid-arguments error
+

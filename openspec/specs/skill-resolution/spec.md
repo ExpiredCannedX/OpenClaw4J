@@ -1,7 +1,7 @@
 # skill-resolution Specification
 
 ## Purpose
-TBD - created by archiving change add-workspace-skill-resolution. Update Purpose after archive.
+定义本地 Skill 元数据解析、显式优先选择与保守自动匹配能力，为 Agent Core 提供可解释、低膨胀的单 Skill 解析边界，但不包含语义召回、会话内去重或渐进式执行期资源加载。
 ## Requirements
 ### Requirement: System parses local skill metadata from SKILL.md front matter
 The system SHALL parse local `SKILL.md` files into normalized Skill definitions by reading YAML front matter metadata and treating the remaining Markdown body as the skill instruction content.
@@ -43,4 +43,3 @@ The system SHALL perform conservative automatic Skill matching from front matter
 #### Scenario: Automatic matching is ambiguous
 - **WHEN** no explicit Skill is requested and multiple local Skills tie for the strongest automatic match
 - **THEN** the system selects no Skill for the request
-
