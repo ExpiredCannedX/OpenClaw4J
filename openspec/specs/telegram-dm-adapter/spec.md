@@ -2,7 +2,7 @@
 
 ## Purpose
 定义 Telegram Bot API 私聊文本渠道的接入边界，负责完成 webhook 鉴权、
-Telegram update 到统一单聊消息模型的协议翻译，以及最终文本回复回传，
+Telegram update 到统一单聊消息模型的协议翻译、最终文本回复回传和已知私聊目标的主动文本发送，
 但不负责核心 Agent 推理、跨平台抽象扩展和非文本交互能力。
 ## Requirements
 ### Requirement: System accepts Telegram private text updates
@@ -36,3 +36,14 @@ The system SHALL acknowledge unsupported Telegram updates without invoking the a
 #### Scenario: Non-private or non-text Telegram update is ignored
 - **WHEN** a Telegram webhook request contains an update that is not a private-chat text message
 - **THEN** the system acknowledges the update without invoking the direct-message service or sending a reply
+
+### Requirement: System sends proactive Telegram private text messages
+The system SHALL allow the Telegram adapter to send a plain-text message to a known Telegram private chat when an internal conversation has already been resolved to a Telegram outbound target.
+
+#### Scenario: Scheduler-triggered reminder is sent to Telegram chat
+- **WHEN** an asynchronous subsystem requests delivery for an internal conversation bound to Telegram and provides a final plain-text body
+- **THEN** the Telegram adapter calls Telegram `sendMessage` for the bound private `chat.id` and sends the provided body as one plain-text message
+
+#### Scenario: Telegram proactive send failure is surfaced safely
+- **WHEN** Telegram rejects a proactive plain-text send request or the outbound call fails
+- **THEN** the Telegram adapter reports a delivery failure to the caller instead of pretending the reminder was delivered

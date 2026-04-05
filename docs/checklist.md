@@ -22,14 +22,15 @@
 - 非目标 / 延后项：当前阶段明确不承诺的内容，只有在后续 change 明确提出后才进入当前契约。
 
 ## 当前已归档能力总览
-- `single-dm-channel`：开发用单聊入口、真实渠道入口抽象、内部消息标准化、内外部身份映射、活跃会话复用与幂等去重。
+- `single-dm-channel`：开发用单聊入口、真实渠道入口抽象、内部消息标准化、内外部身份映射、活跃会话复用、内部会话到渠道回发目标绑定与幂等去重。
 - `single-dm-agent-core`：统一 Agent 入口、`ReplyEnvelope(body + signals)`、最近会话与 workspace 上下文组装、至多一次同步工具闭环、最终一次性回复与失败兜底。
 - `workspace-bootstrap`：`SOUL.md`、`SKILLS.md`、`USER.md`、`MEMORY.md` 的基础加载，静态规则 / 动态记忆 / 本地 Skill 文档分层，以及 `skills/**/SKILL.md` 的稳定发现。
 - `skill-resolution`：`SKILL.md` front matter 解析、显式 Skill 优先、保守自动匹配、单次请求最多选择一个 Skill。
 - `tool-system`：统一工具定义、唯一命名注册中心、同步执行器、结构化成功/失败结果、内置 `time` 工具。
 - `runtime-observability`：运行期观测模式、run 级 trace identity、稳定生命周期事件、console sink、按模式裁剪负载。
-- `telegram-dm-adapter`：Telegram webhook 鉴权、私聊文本 update 翻译、最终一次性文本回复回传。
+- `telegram-dm-adapter`：Telegram webhook 鉴权、私聊文本 update 翻译、最终一次性文本回复回传，以及基于已知私聊目标的主动文本发送。
 - `agent-memory`：单用户 workspace 记忆体系、`USER.md` 白名单写入、本地 SQLite 索引、`memory.search`、`memory.remember`，以及显式 FTS5 tokenizer 策略。
+- `scheduler-reminders`：`reminder.create`、一次性提醒持久化、固定 heartbeat 调度、失败重试，以及按内部会话回到原渠道发送提醒。
 
 ## 核心能力分层
 
@@ -39,8 +40,9 @@
 - 外部消息会被标准化为内部消息模型，再进入统一 Agent 入口。
 - 渠道原生 `user_id`、`conversation_id`、`message_id` 已通过外部映射绑定到平台无关的内部标准 ID。
 - 单聊场景下默认复用“同一渠道同一用户”的活跃会话。
+- 系统已经为活跃内部会话维护渠道回发目标绑定，供提醒等异步能力复用。
 - 渠道层已支持幂等去重，避免同一外部消息重复触发 Agent。
-- Telegram 私聊文本消息已完成 webhook-first 接入、鉴权和最终一次性文本回复回传。
+- Telegram 私聊文本消息已完成 webhook-first 接入、鉴权、最终一次性文本回复回传和主动文本回发。
 
 **Roadmap 目标**
 - 接入更多真实渠道 adapter，例如飞书、QQ、微信等。
@@ -93,11 +95,11 @@
 - 当前 Tool System 已具备统一 Tool API，包括工具名、描述、输入 schema、成功结果和错误结果。
 - 当前已具备唯一命名的工具注册中心和同步执行器。
 - 当前 Agent Core 已能把可用工具目录暴露给模型，并在一次请求内完成“决策 -> 执行一次工具 -> 回填观察 -> 最终回复”的最小闭环。
-- 当前已归档的本地工具包括 `time`、`memory.search`、`memory.remember`。
+- 当前已归档的本地工具包括 `time`、`memory.search`、`memory.remember`、`reminder.create`。
 - 当前阶段仍明确限制为同步请求-响应型工具，不支持异步工具、后台句柄或进度流。
 
 **Roadmap 目标**
-- 补齐 `reminder.create` 等业务工具。
+- 补齐更多业务工具，例如 `reminder.list`、`reminder.update`、`reminder.cancel` 等提醒治理能力。
 - 补齐 MCP Tool Discovery / Invocation 接入，但仍不要求 Resource、Prompt 等非工具能力。
 - 逐步扩展更多业务工具，并在需要时再评估异步工具协议。
 
@@ -122,11 +124,13 @@
 
 ### 7. Scheduler
 **当前已归档能力**
-- 当前还没有已归档的 Scheduler 主能力。
+- 当前已经具备一次性提醒能力，包括同步 `reminder.create`、本地持久化、固定 heartbeat 扫描、失败重试和终态失败处理。
+- 当前提醒触发后已经能够按内部 `ConversationId` 解析回正确渠道目标并回发纯文本提醒。
+- 当前 Scheduler 仍建立在单进程本地部署前提上，不承诺跨崩溃窗口的精确一次投递。
 
 **Roadmap 目标**
-- 提供一次性提醒、cron 提醒、后台 heartbeat 和定时任务状态持久化。
-- 让提醒触发后能按内部 `ConversationId` 回到正确渠道发送消息。
+- 扩展 cron / 重复提醒、更完整的提醒治理能力和更细粒度的任务状态管理。
+- 继续提升提醒触发后的恢复能力、投递幂等性和多渠道主动回发支撑。
 - 保持 Scheduler 与 Channel 之间通过内部会话映射解耦。
 
 ### 8. Reply / Signal Model
@@ -149,7 +153,7 @@
 - 当前系统已在 ingress、agent、tool、reply dispatch 和 failure 边界上发出结构化生命周期事件。
 - 当前已具备 pluggable sink 抽象与 console sink。
 - 当前详细负载暴露会按观测模式裁剪，不会默认泄漏完整 prompt、workspace 或原始模型输出。
-- 当前 memory 写入、memory 检索、索引刷新与工具失败已经具备明确的失败边界和观测留痕。
+- 当前 memory 写入、memory 检索、索引刷新、提醒创建、提醒调度与工具失败已经具备明确的失败边界和观测留痕。
 
 **Roadmap 目标**
 - 继续补齐健康检查、更多 sink、事件持久化与更系统化的运维面。
@@ -181,10 +185,9 @@
 
 ### 已归档覆盖范围
 - 当前已基本覆盖 P0 的单聊主链路、统一 Agent 入口、基础 workspace 加载、最终一次性回复和基础错误兜底。
-- 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation，以及 `memory.search` 的 FTS 升级。
+- 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation、`reminder.create` 与 Scheduler V1，以及 `memory.search` 的 FTS 升级。
 
 ### P1 剩余目标
-- `reminder.create` 与 Scheduler。
 - `LEARNINGS.md`、`ERRORS.md` 写回。
 - MCP Tool 接入。
 - 更完整的 Learn 阶段闭环。
@@ -206,12 +209,11 @@
 - 更完整的部署和运维能力。
 
 ## 建议实现顺序（Roadmap）
-1. 补齐 Scheduler / `reminder.create`。
-2. 收敛 Learn 阶段边界，明确 `LEARNINGS.md` / `ERRORS.md` 的写回策略。
-3. 引入 MCP Tool 接入。
-4. 接入第二个真实渠道 adapter。
-5. 推进混合检索和更完整的记忆演进能力。
-6. 视需要再扩展多 Agent 协作与更复杂的 Skill 执行支撑。
+1. 收敛 Learn 阶段边界，明确 `LEARNINGS.md` / `ERRORS.md` 的写回策略。
+2. 引入 MCP Tool 接入。
+3. 接入第二个真实渠道 adapter。
+4. 推进混合检索和更完整的记忆演进能力。
+5. 视需要再扩展多 Agent 协作与更复杂的 Skill 执行支撑。
 
 ## 非目标
 - V1 不做 ClaudeCode 风格的 workspace runtime。
