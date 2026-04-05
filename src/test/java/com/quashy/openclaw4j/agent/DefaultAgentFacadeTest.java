@@ -281,7 +281,7 @@ class DefaultAgentFacadeTest {
     }
 
     /**
-     * 模型请求 `memory.search` 时，系统必须返回结构化命中并把相对路径与片段预览注入最终回复阶段。
+     * 模型请求 `memory.search` 时，系统必须返回结构化命中，并把相对路径、片段预览与正向 score 注入最终回复阶段。
      */
     @Test
     void shouldExecuteMemorySearchToolAndIncludeStructuredMatchesBeforeFinalReply(@TempDir Path workspaceRoot) throws Exception {
@@ -326,7 +326,8 @@ class DefaultAgentFacadeTest {
         assertThat(finalPromptCaptor.getValue().content())
                 .contains("tool_name: memory.search")
                 .contains("MEMORY.md")
-                .contains("黑咖啡");
+                .contains("黑咖啡")
+                .contains("score=");
         assertThat(replyEnvelope.body()).isEqualTo("我找到了相关记忆。");
     }
 

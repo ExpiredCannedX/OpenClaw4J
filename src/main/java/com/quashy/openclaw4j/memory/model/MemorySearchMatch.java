@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.memory.model;
 
 /**
- * 表示一次 memory.search 命中的结构化匹配结果，供工具和最终回复阶段回填相对路径、行号与预览片段。
+ * 表示一次 memory.search 命中的结构化匹配结果，供工具和最终回复阶段回填相对路径、行号、预览片段与正向相关度分数。
  */
 public record MemorySearchMatch(
         /**
@@ -25,7 +25,7 @@ public record MemorySearchMatch(
          */
         String previewSnippet,
         /**
-         * 承载当前检索实现返回的相关度占位分数，为后续更精细排序保留稳定输出字段。
+         * 承载当前检索实现返回的正向相关度分数，约定值越大代表结果越相关。
          */
         double score
 ) {

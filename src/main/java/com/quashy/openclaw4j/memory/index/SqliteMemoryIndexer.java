@@ -20,13 +20,36 @@ import java.sql.Statement;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
- * 负责把 Markdown 事实源同步到本地 SQLite 索引，并提供按范围过滤的最小关键词检索能力。
+ * 负责把 Markdown 事实源同步到本地 SQLite 派生索引，并以 trigram FTS + 受控短词补偿提供稳定的 memory 检索语义。
  */
 public class SqliteMemoryIndexer {
+
+    /**
+     * 标识当前 memory 派生索引的 schema version，用于判定旧索引是否需要整体重建。
+     */
+    private static final int INDEX_SCHEMA_VERSION = 2;
+
+    /**
+     * 约束单次检索最多返回的命中数，避免工具结果在 prompt 中无限膨胀。
+     */
+    private static final int RESULT_LIMIT = 10;
+
+    /**
+     * 让正文列在 BM25 排序里明显高于 provenance 摘要，避免元数据文本压过真正的记忆内容。
+     */
+    private static final double CONTENT_BM25_WEIGHT = 10.0;
+
+    /**
+     * 让 provenance 摘要仍参与相关度计算，但权重低于正文以保持排序直觉一致。
+     */
+    private static final double PROVENANCE_BM25_WEIGHT = 1.0;
 
     /**
      * 指向当前索引所绑定的 workspace 根目录，用于扫描 `USER.md`、`MEMORY.md` 与 `memory/*.md`。
@@ -53,7 +76,7 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 扫描所有受支持的 memory 文件，并仅对新增或内容变更的文件刷新索引条目。
+     * 扫描所有受支持的 memory 文件，并仅对新增、内容变更或 schema 迁移后的文件刷新索引条目。
      */
     public void refreshChangedFiles() {
         try (Connection connection = openConnection()) {
@@ -93,28 +116,22 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 在本地 SQLite 索引上执行查询，并按 scope 过滤目标桶或当前会话相关的 session 日志块。
+     * 在本地 SQLite 索引上执行查询，并根据长词 `MATCH` 与短词补偿规则返回稳定排序的结构化结果。
      */
     public List<MemorySearchMatch> search(MemorySearchRequest request) {
         try (Connection connection = openConnection()) {
             ensureSchema(connection);
-            try (PreparedStatement statement = connection.prepareStatement(buildSearchSql(request.scope()))) {
-                bindSearchParameters(statement, request);
-                try (ResultSet resultSet = statement.executeQuery()) {
-                    List<MemorySearchMatch> matches = new ArrayList<>();
-                    while (resultSet.next()) {
-                        matches.add(new MemorySearchMatch(
-                                resultSet.getString("relative_path"),
-                                resultSet.getString("target_bucket"),
-                                resultSet.getInt("line_start"),
-                                resultSet.getInt("line_end"),
-                                resultSet.getString("content"),
-                                resultSet.getDouble("score")
-                        ));
-                    }
-                    return matches;
-                }
-            }
+            CompiledSearchQuery compiledSearchQuery = compileSearchQuery(request.query());
+            List<SearchCandidate> candidates = compiledSearchQuery.usesMatch()
+                    ? searchWithMatch(connection, request, compiledSearchQuery)
+                    : searchWithLikeFallback(connection, request, compiledSearchQuery.shortTerms());
+            return candidates.stream()
+                    .sorted(Comparator.comparingDouble(SearchCandidate::score).reversed()
+                            .thenComparing(SearchCandidate::relativePath)
+                            .thenComparingInt(SearchCandidate::lineStart))
+                    .limit(RESULT_LIMIT)
+                    .map(this::toSearchMatch)
+                    .toList();
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to search memory index.", exception);
         }
@@ -133,9 +150,12 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 创建 memory 文件元信息表、文本块表和 FTS5 虚表，确保索引初始化具备自包含能力。
+     * 检查当前索引 schema 是否与预期版本一致；若不一致则整体重建派生结构，再补齐所需表定义。
      */
     private void ensureSchema(Connection connection) throws SQLException {
+        if (requiresSchemaRebuild(connection)) {
+            rebuildDerivedSchema(connection);
+        }
         try (Statement statement = connection.createStatement()) {
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS memory_files (
@@ -162,10 +182,83 @@ public class SqliteMemoryIndexer {
                         content,
                         provenance_summary,
                         content='memory_chunks',
-                        content_rowid='id'
+                        content_rowid='id',
+                        tokenize='trigram'
                     )
                     """);
+            statement.execute("PRAGMA user_version = " + INDEX_SCHEMA_VERSION);
         }
+    }
+
+    /**
+     * 判断当前 SQLite 文件是否仍是兼容的 memory 搜索 schema，避免旧 tokenizer 或旧版本索引继续提供服务。
+     */
+    private boolean requiresSchemaRebuild(Connection connection) throws SQLException {
+        if (readSchemaVersion(connection) != INDEX_SCHEMA_VERSION) {
+            return true;
+        }
+        if (readTableDefinition(connection, "memory_files").isBlank()) {
+            return true;
+        }
+        if (readTableDefinition(connection, "memory_chunks").isBlank()) {
+            return true;
+        }
+        return !isExpectedFtsDefinition(readTableDefinition(connection, "memory_chunks_fts"));
+    }
+
+    /**
+     * 删除全部派生索引结构，让旧 tokenizer 和旧版本元数据不会在升级后残留陈旧行为。
+     */
+    private void rebuildDerivedSchema(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("DROP TABLE IF EXISTS memory_chunks_fts");
+            statement.execute("DROP TABLE IF EXISTS memory_chunks");
+            statement.execute("DROP TABLE IF EXISTS memory_files");
+            statement.execute("PRAGMA user_version = 0");
+        }
+    }
+
+    /**
+     * 读取 SQLite `user_version` 作为索引 schema version，避免为派生元数据再引入额外业务表。
+     */
+    private int readSchemaVersion(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("PRAGMA user_version")) {
+            return resultSet.next() ? resultSet.getInt(1) : 0;
+        }
+    }
+
+    /**
+     * 读取指定表或虚表的建表 SQL，用于判定 FTS 定义是否仍与当前代码期望一致。
+     */
+    private String readTableDefinition(Connection connection, String tableName) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT sql
+                FROM sqlite_master
+                WHERE name = ?
+                """)) {
+            statement.setString(1, tableName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getString("sql") : "";
+            }
+        }
+    }
+
+    /**
+     * 验证 FTS 虚表是否仍使用预期的 trigram、外部内容表和 rowid 绑定，避免部分升级留下隐式行为。
+     */
+    private boolean isExpectedFtsDefinition(String ftsDefinition) {
+        String normalizedDefinition = normalizeSql(ftsDefinition);
+        return normalizedDefinition.contains("tokenize='trigram'")
+                && normalizedDefinition.contains("content='memory_chunks'")
+                && normalizedDefinition.contains("content_rowid='id'");
+    }
+
+    /**
+     * 统一压缩 SQL 中的多余空白，避免 sqlite_master 返回格式差异导致定义比较出现误判。
+     */
+    private String normalizeSql(String sql) {
+        return sql == null ? "" : sql.replaceAll("\\s+", " ").trim();
     }
 
     /**
@@ -271,7 +364,7 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 把普通块内容同步写入 FTS5 虚表，为后续增强检索保留一致的索引结构。
+     * 把普通块内容同步写入 trigram FTS 虚表，使全文检索始终与普通结构化字段保持一致。
      */
     private void insertChunkFts(Connection connection, long chunkId, Chunk chunk) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
@@ -407,58 +500,280 @@ public class SqliteMemoryIndexer {
     }
 
     /**
-     * 根据搜索范围构造 SQL 语句，确保 `session` 查询只命中当前会话相关块，而其他范围保持显式桶过滤。
+     * 把原始查询归一化为稳定的 term 列表，并区分可走 trigram `MATCH` 的长词与只能补偿的短词。
      */
-    private String buildSearchSql(MemorySearchScope scope) {
-        return switch (scope) {
-            case ALL -> """
-                    SELECT relative_path, target_bucket, line_start, line_end, content, 0.0 AS score
-                    FROM memory_chunks
-                    WHERE content LIKE ? OR provenance_summary LIKE ?
-                    ORDER BY relative_path, line_start
-                    LIMIT 10
-                    """;
-            case USER_PROFILE, LONG_TERM -> """
-                    SELECT relative_path, target_bucket, line_start, line_end, content, 0.0 AS score
-                    FROM memory_chunks
-                    WHERE target_bucket = ? AND (content LIKE ? OR provenance_summary LIKE ?)
-                    ORDER BY relative_path, line_start
-                    LIMIT 10
-                    """;
-            case SESSION -> """
-                    SELECT relative_path, target_bucket, line_start, line_end, content, 0.0 AS score
-                    FROM memory_chunks
-                    WHERE target_bucket = ?
-                      AND conversation_id = ?
-                      AND (content LIKE ? OR provenance_summary LIKE ?)
-                    ORDER BY relative_path, line_start
-                    LIMIT 10
-                    """;
-        };
+    private CompiledSearchQuery compileSearchQuery(String rawQuery) {
+        List<String> normalizedTerms = Arrays.stream(rawQuery.strip().split("\\s+"))
+                .filter(term -> !term.isBlank())
+                .distinct()
+                .toList();
+        List<String> longTerms = new ArrayList<>();
+        List<String> shortTerms = new ArrayList<>();
+        for (String term : normalizedTerms) {
+            if (term.codePointCount(0, term.length()) >= 3) {
+                longTerms.add(term);
+            } else {
+                shortTerms.add(term);
+            }
+        }
+        String matchExpression = longTerms.isEmpty()
+                ? null
+                : longTerms.stream().map(this::escapeMatchPhrase).collect(Collectors.joining(" AND "));
+        return new CompiledSearchQuery(String.join(" ", normalizedTerms), longTerms, shortTerms, matchExpression);
     }
 
     /**
-     * 按 scope 为查询绑定参数，避免调用方手写不同 SQL 参数顺序。
+     * 使用 FTS5 `MATCH` 执行主检索，并在 SQL 侧保留 scope 与短词补偿过滤，确保候选集尽量收敛。
      */
-    private void bindSearchParameters(PreparedStatement statement, MemorySearchRequest request) throws SQLException {
-        String likePattern = "%" + request.query() + "%";
-        if (request.scope() == MemorySearchScope.USER_PROFILE) {
-            statement.setString(1, MemoryTargetBucket.USER_PROFILE.value());
-            statement.setString(2, likePattern);
-            statement.setString(3, likePattern);
-        } else if (request.scope() == MemorySearchScope.LONG_TERM) {
-            statement.setString(1, MemoryTargetBucket.LONG_TERM.value());
-            statement.setString(2, likePattern);
-            statement.setString(3, likePattern);
-        } else if (request.scope() == MemorySearchScope.SESSION) {
-            statement.setString(1, MemoryTargetBucket.SESSION_LOG.value());
-            statement.setString(2, request.executionContext().conversationId().value());
-            statement.setString(3, likePattern);
-            statement.setString(4, likePattern);
-        } else {
-            statement.setString(1, likePattern);
-            statement.setString(2, likePattern);
+    private List<SearchCandidate> searchWithMatch(
+            Connection connection,
+            MemorySearchRequest request,
+            CompiledSearchQuery compiledSearchQuery
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                buildMatchSearchSql(request.scope(), compiledSearchQuery.shortTerms().size())
+        )) {
+            bindMatchSearchParameters(statement, request, compiledSearchQuery);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<SearchCandidate> candidates = new ArrayList<>();
+                while (resultSet.next()) {
+                    candidates.add(new SearchCandidate(
+                            resultSet.getString("relative_path"),
+                            resultSet.getString("target_bucket"),
+                            resultSet.getInt("line_start"),
+                            resultSet.getInt("line_end"),
+                            resultSet.getString("content"),
+                            toPositiveFtsScore(resultSet.getDouble("raw_score"))
+                    ));
+                }
+                return candidates;
+            }
         }
+    }
+
+    /**
+     * 在所有查询项都过短时退回结构化 `LIKE` 路径，并使用受控子串分数保持结果顺序稳定可解释。
+     */
+    private List<SearchCandidate> searchWithLikeFallback(
+            Connection connection,
+            MemorySearchRequest request,
+            List<String> shortTerms
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                buildLikeFallbackSql(request.scope(), shortTerms.size())
+        )) {
+            bindLikeFallbackParameters(statement, request, shortTerms);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                List<SearchCandidate> candidates = new ArrayList<>();
+                while (resultSet.next()) {
+                    String content = resultSet.getString("content");
+                    String provenanceSummary = resultSet.getString("provenance_summary");
+                    candidates.add(new SearchCandidate(
+                            resultSet.getString("relative_path"),
+                            resultSet.getString("target_bucket"),
+                            resultSet.getInt("line_start"),
+                            resultSet.getInt("line_end"),
+                            content,
+                            computeLikeFallbackScore(shortTerms, content, provenanceSummary)
+                    ));
+                }
+                return candidates;
+            }
+        }
+    }
+
+    /**
+     * 构造 FTS 主查询 SQL，让全文匹配只负责找文本，而 scope 继续由结构化字段精确约束。
+     */
+    private String buildMatchSearchSql(MemorySearchScope scope, int shortTermCount) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT
+                    memory_chunks.relative_path,
+                    memory_chunks.target_bucket,
+                    memory_chunks.line_start,
+                    memory_chunks.line_end,
+                    memory_chunks.content,
+                    bm25(memory_chunks_fts, %s, %s) AS raw_score
+                FROM memory_chunks_fts
+                JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
+                WHERE memory_chunks_fts MATCH ?
+                """.formatted(CONTENT_BM25_WEIGHT, PROVENANCE_BM25_WEIGHT));
+        appendScopePredicate(sql, scope);
+        appendLikePredicates(sql, shortTermCount, "memory_chunks.content", "memory_chunks.provenance_summary");
+        sql.append("""
+
+                ORDER BY raw_score ASC, memory_chunks.relative_path ASC, memory_chunks.line_start ASC
+                """);
+        return sql.toString();
+    }
+
+    /**
+     * 构造全短词 fallback SQL，保持与 FTS 路径一致的 scope 约束和结果字段结构。
+     */
+    private String buildLikeFallbackSql(MemorySearchScope scope, int shortTermCount) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT
+                    memory_chunks.relative_path,
+                    memory_chunks.target_bucket,
+                    memory_chunks.line_start,
+                    memory_chunks.line_end,
+                    memory_chunks.content,
+                    memory_chunks.provenance_summary
+                FROM memory_chunks
+                WHERE 1 = 1
+                """);
+        appendScopePredicate(sql, scope);
+        appendLikePredicates(sql, shortTermCount, "memory_chunks.content", "memory_chunks.provenance_summary");
+        sql.append("""
+
+                ORDER BY memory_chunks.relative_path ASC, memory_chunks.line_start ASC
+                """);
+        return sql.toString();
+    }
+
+    /**
+     * 根据 scope 把结构化业务过滤拼进 SQL，避免把 target bucket 或 conversation 语义塞进全文索引文本。
+     */
+    private void appendScopePredicate(StringBuilder sql, MemorySearchScope scope) {
+        switch (scope) {
+            case USER_PROFILE -> sql.append("\nAND memory_chunks.target_bucket = ?");
+            case LONG_TERM -> sql.append("\nAND memory_chunks.target_bucket = ?");
+            case SESSION -> sql.append("""
+
+                    AND memory_chunks.target_bucket = ?
+                    AND memory_chunks.conversation_id = ?
+                    """);
+            case ALL -> {
+            }
+        }
+    }
+
+    /**
+     * 为每个短词追加受控 `LIKE` 条件，并显式声明转义字符以避免 `%`、`_` 被误解释成通配符。
+     */
+    private void appendLikePredicates(StringBuilder sql, int shortTermCount, String contentColumn, String provenanceColumn) {
+        for (int index = 0; index < shortTermCount; index++) {
+            sql.append("""
+
+                    AND (
+                        %s LIKE ? ESCAPE '!'
+                        OR %s LIKE ? ESCAPE '!'
+                    )
+                    """.formatted(contentColumn, provenanceColumn));
+        }
+    }
+
+    /**
+     * 绑定 FTS 主查询的参数顺序，确保 `MATCH`、scope 和短词补偿条件之间不会发生错位。
+     */
+    private void bindMatchSearchParameters(
+            PreparedStatement statement,
+            MemorySearchRequest request,
+            CompiledSearchQuery compiledSearchQuery
+    ) throws SQLException {
+        int parameterIndex = 1;
+        statement.setString(parameterIndex++, compiledSearchQuery.matchExpression());
+        parameterIndex = bindScopeParameters(statement, parameterIndex, request);
+        bindShortTermLikeParameters(statement, parameterIndex, compiledSearchQuery.shortTerms());
+    }
+
+    /**
+     * 绑定全短词 fallback 查询参数，复用与主路径一致的 scope 参数顺序与短词转义规则。
+     */
+    private void bindLikeFallbackParameters(
+            PreparedStatement statement,
+            MemorySearchRequest request,
+            List<String> shortTerms
+    ) throws SQLException {
+        int parameterIndex = bindScopeParameters(statement, 1, request);
+        bindShortTermLikeParameters(statement, parameterIndex, shortTerms);
+    }
+
+    /**
+     * 按 scope 为查询绑定结构化过滤参数，避免调用方手写不同 SQL 参数顺序。
+     */
+    private int bindScopeParameters(PreparedStatement statement, int startIndex, MemorySearchRequest request) throws SQLException {
+        int parameterIndex = startIndex;
+        if (request.scope() == MemorySearchScope.USER_PROFILE) {
+            statement.setString(parameterIndex++, MemoryTargetBucket.USER_PROFILE.value());
+        } else if (request.scope() == MemorySearchScope.LONG_TERM) {
+            statement.setString(parameterIndex++, MemoryTargetBucket.LONG_TERM.value());
+        } else if (request.scope() == MemorySearchScope.SESSION) {
+            statement.setString(parameterIndex++, MemoryTargetBucket.SESSION_LOG.value());
+            statement.setString(parameterIndex++, request.executionContext().conversationId().value());
+        }
+        return parameterIndex;
+    }
+
+    /**
+     * 为短词补偿条件绑定 `%term%` 模式，并对通配符做转义，避免 fallback 路径退化成不受控模糊匹配。
+     */
+    private void bindShortTermLikeParameters(PreparedStatement statement, int startIndex, List<String> shortTerms) throws SQLException {
+        int parameterIndex = startIndex;
+        for (String shortTerm : shortTerms) {
+            String likePattern = buildEscapedLikePattern(shortTerm);
+            statement.setString(parameterIndex++, likePattern);
+            statement.setString(parameterIndex++, likePattern);
+        }
+    }
+
+    /**
+     * 把短词包装为安全的 `LIKE` 子串模式，并转义 SQLite 会识别的通配符字符。
+     */
+    private String buildEscapedLikePattern(String queryTerm) {
+        String escapedTerm = queryTerm
+                .replace("!", "!!")
+                .replace("%", "!%")
+                .replace("_", "!_");
+        return "%" + escapedTerm + "%";
+    }
+
+    /**
+     * 把原始查询项包装成安全的 FTS phrase，避免引号和保留字符破坏 `MATCH` 语法。
+     */
+    private String escapeMatchPhrase(String queryTerm) {
+        return "\"" + queryTerm.replace("\"", "\"\"") + "\"";
+    }
+
+    /**
+     * 把 SQLite 原始 BM25 值转换为“越大越相关”的正向分数，保持工具对外语义直观稳定。
+     */
+    private double toPositiveFtsScore(double rawScore) {
+        double invertedScore = -rawScore;
+        if (invertedScore > 0.0d) {
+            return invertedScore;
+        }
+        return 1.0d / (1.0d + Math.max(rawScore, 0.0d));
+    }
+
+    /**
+     * 为全短词 fallback 结果生成稳定的启发式分数，使其即使不走 BM25 也能保持非零相关度语义。
+     */
+    private double computeLikeFallbackScore(List<String> shortTerms, String content, String provenanceSummary) {
+        double score = 0.0d;
+        for (String shortTerm : shortTerms) {
+            if (content.contains(shortTerm)) {
+                score += 1.0d;
+            }
+            if (!provenanceSummary.isBlank() && provenanceSummary.contains(shortTerm)) {
+                score += 0.25d;
+            }
+        }
+        return score;
+    }
+
+    /**
+     * 把内部候选对象压平为对外暴露的结构化命中，避免让工具层依赖索引器内部排序细节。
+     */
+    private MemorySearchMatch toSearchMatch(SearchCandidate candidate) {
+        return new MemorySearchMatch(
+                candidate.relativePath(),
+                candidate.targetBucket(),
+                candidate.lineStart(),
+                candidate.lineEnd(),
+                candidate.previewSnippet(),
+                candidate.score()
+        );
     }
 
     /**
@@ -478,6 +793,67 @@ public class SqliteMemoryIndexer {
      */
     private String normalizeRelativePath(Path relativePath) {
         return relativePath.toString().replace('\\', '/');
+    }
+
+    /**
+     * 表示一次已归一化并完成查询路径判定的搜索请求，避免在 SQL 组装阶段重复解析原始字符串。
+     */
+    private record CompiledSearchQuery(
+            /**
+             * 保存去重并压缩空白后的规范化查询文本，便于调试和后续扩展观察输出。
+             */
+            String normalizedQuery,
+            /**
+             * 保存可直接进入 trigram `MATCH` 的长查询项列表，确保主检索路径只处理可命中的 term。
+             */
+            List<String> longTerms,
+            /**
+             * 保存长度不足 trigram 下界的短查询项列表，供 `LIKE` 补偿路径复用。
+             */
+            List<String> shortTerms,
+            /**
+             * 保存已经完成安全转义的 FTS 表达式，避免 SQL 绑定阶段重复拼装 phrase。
+             */
+            String matchExpression
+    ) {
+
+        /**
+         * 返回当前查询是否包含可走 FTS 主路径的长词，供检索执行阶段选择 SQL 模板。
+         */
+        private boolean usesMatch() {
+            return matchExpression != null && !matchExpression.isBlank();
+        }
+    }
+
+    /**
+     * 表示一个已完成 score 计算但尚未转换为对外 record 的检索候选，用于统一排序与限流。
+     */
+    private record SearchCandidate(
+            /**
+             * 标识命中块所在的相对文件路径，便于最终结果定位事实源。
+             */
+            String relativePath,
+            /**
+             * 标识命中块所属的目标桶值，保证工具层仍可区分画像、长期记忆和会话日志。
+             */
+            String targetBucket,
+            /**
+             * 标识命中块起始行号，供调用方和测试验证片段位置。
+             */
+            int lineStart,
+            /**
+             * 标识命中块结束行号，帮助调用方理解结果覆盖范围。
+             */
+            int lineEnd,
+            /**
+             * 保存适合直接暴露给模型的片段预览，而不是额外保留内部 provenance 字段。
+             */
+            String previewSnippet,
+            /**
+             * 保存已经转换为正向语义的相关度分数，供统一排序和对外回填。
+             */
+            double score
+    ) {
     }
 
     /**
@@ -505,7 +881,7 @@ public class SqliteMemoryIndexer {
              */
             String conversationId,
             /**
-             * 保存块内简化后的 provenance 摘要，供后续扩展检索字段或调试输出复用。
+             * 保存块内简化后的 provenance 摘要，供短词补偿与调试输出复用。
              */
             String provenanceSummary
     ) {

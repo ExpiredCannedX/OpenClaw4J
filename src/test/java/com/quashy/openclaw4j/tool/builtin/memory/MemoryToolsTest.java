@@ -127,6 +127,54 @@ class MemoryToolsTest {
     }
 
     /**
+     * search 工具命中中文记忆时必须继续返回兼容的结构化列表，并把正向 score 一并透传给调用方。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void shouldReturnStructuredMatchesWithPositiveScoreWhenSearchHitsMemory() throws IOException {
+        Files.writeString(workspaceRoot.resolve("MEMORY.md"), """
+                # 长期记忆
+
+                - 用户每周都会喝黑咖啡
+                  - written_at: 2026-04-04T10:15:30+08:00
+                  - channel: telegram
+                  - trigger_reason: user_confirmed
+                """);
+        new SqliteMemoryIndexer(
+                workspaceRoot,
+                workspaceRoot.resolve(".openclaw/memory-index.sqlite"),
+                fixedClock()
+        ).refreshChangedFiles();
+        ToolRegistry toolRegistry = createToolRegistry();
+        DefaultToolExecutor executor = new DefaultToolExecutor(toolRegistry);
+
+        ToolExecutionResult result = executor.execute(new ToolCallRequest(
+                "memory.search",
+                Map.of(
+                        "query", "黑咖啡",
+                        "scope", "all"
+                ),
+                createExecutionContext("conversation-1")
+        ));
+
+        assertThat(result)
+                .isInstanceOfSatisfying(ToolExecutionSuccess.class, success -> {
+                    assertThat(success.toolName()).isEqualTo("memory.search");
+                    assertThat(success.payload()).containsEntry("query", "黑咖啡");
+                    assertThat(success.payload()).containsEntry("scope", "all");
+                    List<Map<String, Object>> matches = (List<Map<String, Object>>) success.payload().get("matches");
+                    assertThat(matches)
+                            .singleElement()
+                            .satisfies(match -> {
+                                assertThat(match).containsEntry("relativePath", "MEMORY.md");
+                                assertThat(match).containsEntry("targetBucket", "long_term");
+                                assertThat(match.get("previewSnippet")).asString().contains("黑咖啡");
+                                assertThat(((Number) match.get("score")).doubleValue()).isPositive();
+                            });
+                });
+    }
+
+    /**
      * 构造包含 memory 两个内置工具的注册中心，复用真实 store/index/service 组合验证最小闭环。
      */
     private ToolRegistry createToolRegistry() {
