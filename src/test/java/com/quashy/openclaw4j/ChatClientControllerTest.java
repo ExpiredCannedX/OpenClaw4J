@@ -7,6 +7,8 @@ import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -32,6 +34,8 @@ class ChatClientControllerTest {
                 new OpenClawProperties.DebugProperties("来自配置的默认问题"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
+                new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
         ChatClientController controller = new ChatClientController(agentModelClient, properties);

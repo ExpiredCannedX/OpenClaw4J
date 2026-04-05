@@ -48,6 +48,7 @@ import org.mockito.ArgumentCaptor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -561,6 +562,8 @@ class DefaultAgentFacadeTest {
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
+                new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
     }

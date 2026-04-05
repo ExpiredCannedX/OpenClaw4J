@@ -11,6 +11,7 @@ import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
+import com.quashy.openclaw4j.store.memory.InMemoryConversationDeliveryTargetRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class TelegramWebhookServiceTest {
                         new InMemoryIdentityMappingRepository(),
                         new InMemoryActiveConversationRepository(),
                         new InMemoryProcessedMessageRepository(),
+                        new InMemoryConversationDeliveryTargetRepository(),
                         agentFacade,
                         publisher
                 ),
@@ -96,6 +98,7 @@ class TelegramWebhookServiceTest {
                         new InMemoryIdentityMappingRepository(),
                         new InMemoryActiveConversationRepository(),
                         new InMemoryProcessedMessageRepository(),
+                        new InMemoryConversationDeliveryTargetRepository(),
                         agentFacade,
                         new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
                 ),
@@ -130,6 +133,7 @@ class TelegramWebhookServiceTest {
                         new InMemoryIdentityMappingRepository(),
                         new InMemoryActiveConversationRepository(),
                         new InMemoryProcessedMessageRepository(),
+                        new InMemoryConversationDeliveryTargetRepository(),
                         agentFacade,
                         new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
                 ),
@@ -171,6 +175,7 @@ class TelegramWebhookServiceTest {
                         new InMemoryIdentityMappingRepository(),
                         new InMemoryActiveConversationRepository(),
                         new InMemoryProcessedMessageRepository(),
+                        new InMemoryConversationDeliveryTargetRepository(),
                         agentFacade,
                         new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
                 ),

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,6 +37,8 @@ class FileWorkspaceLoaderTest {
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
+                new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         ));
 
@@ -74,6 +77,8 @@ class FileWorkspaceLoaderTest {
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
+                new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         ));
 

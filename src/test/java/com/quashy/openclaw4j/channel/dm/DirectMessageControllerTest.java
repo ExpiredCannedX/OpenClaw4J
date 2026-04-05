@@ -13,6 +13,7 @@ import com.quashy.openclaw4j.observability.sink.NoopRuntimeObservationSink;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
+import com.quashy.openclaw4j.store.memory.InMemoryConversationDeliveryTargetRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
@@ -29,6 +30,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -66,6 +68,8 @@ class DirectMessageControllerTest {
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
+                new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
         );
         DefaultRuntimeObservationPublisher observationPublisher = new DefaultRuntimeObservationPublisher(
@@ -96,6 +100,7 @@ class DirectMessageControllerTest {
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
                 new InMemoryProcessedMessageRepository(),
+                new InMemoryConversationDeliveryTargetRepository(),
                 new DefaultAgentFacade(
                         new FileWorkspaceLoader(properties),
                         new AgentPromptAssembler(),

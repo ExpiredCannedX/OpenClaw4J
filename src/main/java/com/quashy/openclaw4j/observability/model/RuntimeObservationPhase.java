@@ -41,6 +41,11 @@ public enum RuntimeObservationPhase {
     TOOL,
 
     /**
+     * 对应后台 heartbeat 扫描、任务 claim、重试排程等调度阶段。
+     */
+    SCHEDULER,
+
+    /**
      * 对应最终回复正文生成与收敛阶段。
      */
     REPLY,

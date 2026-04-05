@@ -4,12 +4,14 @@ import com.quashy.openclaw4j.config.OpenClawProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * OpenClaw4J 应用启动入口，负责激活组件扫描和当前阶段所需的集中配置绑定。
  */
 @SpringBootApplication
 @EnableConfigurationProperties(OpenClawProperties.class)
+@EnableScheduling
 public class OpenClaw4JApplication {
 
     /**

@@ -4,6 +4,8 @@ import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
+
 /**
  * 统一收敛单聊核心链路当前阶段需要的可配置项，避免 workspace、上下文轮次、调试入口文案和 Telegram 参数散落在实现细节中。
  */
@@ -34,6 +36,14 @@ public record OpenClawProperties(
          */
         ObservabilityProperties observability,
         /**
+         * 收敛 reminder V1 的本地 SQLite 文件路径，避免异步任务事实源散落在具体仓储实现中。
+         */
+        ReminderProperties reminder,
+        /**
+         * 收敛 Scheduler heartbeat、批量扫描与失败重试预算，确保后台调度行为由集中配置统一驱动。
+         */
+        SchedulerProperties scheduler,
+        /**
          * 收敛 memory V1 的本地索引文件配置，避免 SQLite 路径散落在索引器与工具实现中。
          */
         MemoryProperties memory
@@ -49,6 +59,8 @@ public record OpenClawProperties(
         debug = debug != null ? debug : new DebugProperties(null);
         telegram = telegram != null ? telegram : new TelegramProperties(false, null, null, null, null);
         observability = observability != null ? observability : new ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160);
+        reminder = reminder != null ? reminder : new ReminderProperties(null);
+        scheduler = scheduler != null ? scheduler : new SchedulerProperties(null, 0, 0, null);
         memory = memory != null ? memory : new MemoryProperties(null);
     }
 
@@ -149,6 +161,57 @@ public record OpenClawProperties(
          */
         public MemoryProperties {
             indexFile = StringUtils.hasText(indexFile) ? indexFile : ".openclaw/memory-index.sqlite";
+        }
+    }
+
+    /**
+     * 描述 reminder V1 的本地持久化文件落点，使提醒任务与 memory 索引拥有各自明确的数据职责边界。
+     */
+    public record ReminderProperties(
+            /**
+             * 指向 reminder SQLite 单文件事实源的相对或绝对路径；相对路径默认以 workspace 根目录为基准解析。
+             */
+            String databaseFile
+    ) {
+
+        /**
+         * 为 reminder 事实源文件提供稳定默认值，保证首次启用提醒能力时能在 workspace 下自动建库。
+         */
+        public ReminderProperties {
+            databaseFile = StringUtils.hasText(databaseFile) ? databaseFile : ".openclaw/reminders.sqlite";
+        }
+    }
+
+    /**
+     * 描述 reminder Scheduler V1 的最小运行时参数，使 heartbeat、批量扫描和失败重试规则都能稳定外置。
+     */
+    public record SchedulerProperties(
+            /**
+             * 控制后台 heartbeat 的固定扫描间隔，避免调度频率被硬编码在实现类中。
+             */
+            Duration heartbeat,
+            /**
+             * 控制单次 heartbeat 最多 claim 的到期任务数，避免扫描阶段无限拉取导致单轮阻塞。
+             */
+            int scanBatchSize,
+            /**
+             * 控制 reminder 自动重试的最大失败次数，超过预算后任务进入终态失败。
+             */
+            int maxRetryAttempts,
+            /**
+             * 控制 reminder 失败后的固定退避时长，避免短暂故障时立即热循环重试。
+             */
+            Duration retryBackoff
+    ) {
+
+        /**
+         * 为 Scheduler 提供稳定默认值，保证本地开发和测试在未显式声明时仍保持最小可运行语义。
+         */
+        public SchedulerProperties {
+            heartbeat = heartbeat != null && !heartbeat.isNegative() && !heartbeat.isZero() ? heartbeat : Duration.ofSeconds(15);
+            scanBatchSize = scanBatchSize > 0 ? scanBatchSize : 20;
+            maxRetryAttempts = maxRetryAttempts >= 0 ? maxRetryAttempts : 3;
+            retryBackoff = retryBackoff != null && !retryBackoff.isNegative() && !retryBackoff.isZero() ? retryBackoff : Duration.ofMinutes(3);
         }
     }
 }

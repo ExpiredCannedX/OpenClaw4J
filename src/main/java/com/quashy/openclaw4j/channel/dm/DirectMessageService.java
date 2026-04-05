@@ -2,6 +2,7 @@ package com.quashy.openclaw4j.channel.dm;
 
 import com.quashy.openclaw4j.agent.api.AgentFacade;
 import com.quashy.openclaw4j.agent.api.AgentRequest;
+import com.quashy.openclaw4j.domain.ConversationDeliveryTarget;
 import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
@@ -11,10 +12,12 @@ import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.repository.ActiveConversationRepository;
+import com.quashy.openclaw4j.repository.ConversationDeliveryTargetRepository;
 import com.quashy.openclaw4j.repository.IdentityMappingRepository;
 import com.quashy.openclaw4j.repository.ProcessedMessageRepository;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +47,11 @@ public class DirectMessageService {
     private final ProcessedMessageRepository processedMessageRepository;
 
     /**
+     * 维护内部会话到渠道回发目标的绑定，使 reminder 等异步能力能仅凭内部会话定位回发目标。
+     */
+    private final ConversationDeliveryTargetRepository conversationDeliveryTargetRepository;
+
+    /**
      * 统一 Agent 入口，负责后续的上下文加载、模型调用和结构化回复生成。
      */
     private final AgentFacade agentFacade;
@@ -65,12 +73,14 @@ public class DirectMessageService {
             IdentityMappingRepository identityMappingRepository,
             ActiveConversationRepository activeConversationRepository,
             ProcessedMessageRepository processedMessageRepository,
+            ConversationDeliveryTargetRepository conversationDeliveryTargetRepository,
             AgentFacade agentFacade,
             RuntimeObservationPublisher runtimeObservationPublisher
     ) {
         this.identityMappingRepository = identityMappingRepository;
         this.activeConversationRepository = activeConversationRepository;
         this.processedMessageRepository = processedMessageRepository;
+        this.conversationDeliveryTargetRepository = conversationDeliveryTargetRepository;
         this.agentFacade = agentFacade;
         this.runtimeObservationPublisher = runtimeObservationPublisher;
     }
@@ -178,6 +188,12 @@ public class DirectMessageService {
         );
         InternalUserId userId = identityMappingRepository.getOrCreateInternalUserId(request.channel(), request.externalUserId());
         InternalConversationId conversationId = activeConversationRepository.getOrCreateActiveConversation(request.channel(), request.externalUserId());
+        conversationDeliveryTargetRepository.save(new ConversationDeliveryTarget(
+                conversationId,
+                request.channel(),
+                request.externalConversationId(),
+                OffsetDateTime.now()
+        ));
         TraceContext enrichedTraceContext = traceContext.withInternalConversationId(conversationId.value());
         return new FirstProcessingResult(agentFacade.reply(new AgentRequest(userId, conversationId, message, enrichedTraceContext)), enrichedTraceContext);
     }

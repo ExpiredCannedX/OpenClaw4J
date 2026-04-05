@@ -2,6 +2,7 @@ package com.quashy.openclaw4j.channel.dm;
 
 import com.quashy.openclaw4j.agent.api.AgentFacade;
 import com.quashy.openclaw4j.agent.api.AgentRequest;
+import com.quashy.openclaw4j.domain.ConversationDeliveryTarget;
 import com.quashy.openclaw4j.domain.ReplyEnvelope;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationEvent;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
@@ -10,6 +11,7 @@ import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
+import com.quashy.openclaw4j.store.memory.InMemoryConversationDeliveryTargetRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
 import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
 import org.junit.jupiter.api.Test;
@@ -49,6 +51,7 @@ class DirectMessageServiceTest {
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
                 new InMemoryProcessedMessageRepository(),
+                new InMemoryConversationDeliveryTargetRepository(),
                 agentFacade,
                 publisher
         );
@@ -90,6 +93,7 @@ class DirectMessageServiceTest {
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
                 new InMemoryProcessedMessageRepository(),
+                new InMemoryConversationDeliveryTargetRepository(),
                 agentFacade,
                 new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
         );
@@ -116,6 +120,7 @@ class DirectMessageServiceTest {
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
                 new InMemoryProcessedMessageRepository(),
+                new InMemoryConversationDeliveryTargetRepository(),
                 agentFacade,
                 new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
         );
@@ -151,6 +156,7 @@ class DirectMessageServiceTest {
                 new InMemoryIdentityMappingRepository(),
                 new InMemoryActiveConversationRepository(),
                 new InMemoryProcessedMessageRepository(),
+                new InMemoryConversationDeliveryTargetRepository(),
                 agentFacade,
                 new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
         );
@@ -174,6 +180,38 @@ class DirectMessageServiceTest {
         }
 
         verify(agentFacade, times(1)).reply(any());
+    }
+
+    /**
+     * 完成内部会话解析后必须同步刷新回发目标绑定，确保 reminder 之类的异步能力能仅凭内部会话回到正确渠道会话。
+     */
+    @Test
+    void shouldRefreshConversationDeliveryTargetAfterConversationResolution() {
+        AgentFacade agentFacade = mock(AgentFacade.class);
+        when(agentFacade.reply(any())).thenReturn(new ReplyEnvelope("ok", List.of()));
+        InMemoryConversationDeliveryTargetRepository deliveryTargetRepository = new InMemoryConversationDeliveryTargetRepository();
+        DirectMessageService service = new DirectMessageService(
+                new InMemoryIdentityMappingRepository(),
+                new InMemoryActiveConversationRepository(),
+                new InMemoryProcessedMessageRepository(),
+                deliveryTargetRepository,
+                agentFacade,
+                new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF)
+        );
+
+        service.handle(new DirectMessageIngressCommand("telegram", "user-1", "dm-1", "msg-1", "你好"));
+
+        ArgumentCaptor<AgentRequest> requestCaptor = ArgumentCaptor.forClass(AgentRequest.class);
+        verify(agentFacade).reply(requestCaptor.capture());
+        assertThat(deliveryTargetRepository.findByConversationId(requestCaptor.getValue().conversationId()))
+                .hasValueSatisfying(target -> {
+                    assertThat(target).isEqualTo(new ConversationDeliveryTarget(
+                            requestCaptor.getValue().conversationId(),
+                            "telegram",
+                            "dm-1",
+                            target.updatedAt()
+                    ));
+                });
     }
 
     /**
