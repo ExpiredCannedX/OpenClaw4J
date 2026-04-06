@@ -58,9 +58,9 @@
 - 当前 Reply 模型锁定为 one-shot final reply，不支持流式 token、消息编辑或中途进度推送。
 
 **Roadmap 目标**
-- 把执行循环逐步扩展到更完整的 `Load -> Think -> Act -> Observe -> Learn -> Reply`。
-- 引入真正的 Learn 阶段写回，而不是只停留在工具观察和当前 memory foundation。
-- 支持更复杂的工具编排、多步决策和后续上下文压缩能力。
+- 优先把执行循环扩展到更完整的 `Load -> Think -> Act -> Observe -> Reply`，先补齐 MCP 接入前提下的多步工具编排与智能体编排基础。
+- 在保持 one-shot reply 契约的前提下，逐步支持更复杂的工具编排、多步决策、受控委派与后续上下文压缩能力。
+- Learn 阶段写回继续保留为远期方向，但当前不作为主线优先事项。
 
 ### 3. Workspace
 **当前已归档能力**
@@ -100,7 +100,8 @@
 
 **Roadmap 目标**
 - 补齐更多业务工具，例如 `reminder.list`、`reminder.update`、`reminder.cancel` 等提醒治理能力。
-- 补齐 MCP Tool Discovery / Invocation 接入，但仍不要求 Resource、Prompt 等非工具能力。
+- 优先补齐 MCP Tool Discovery / Invocation 接入，但仍不要求 Resource、Prompt 等非工具能力。
+- 围绕 MCP Tool 接入补齐工具编排、超时/失败治理与可观测性边界，为后续智能体编排提供稳定执行基座。
 - 逐步扩展更多业务工具，并在需要时再评估异步工具协议。
 
 ### 6. Memory / Retrieval
@@ -120,7 +121,7 @@
 - 增加 `memory.update`、`memory.forget`、`memory.get`、`event log` 等更完整的记忆操作能力。
 - 引入向量检索、混合检索、分数归一化、时间衰减与更细粒度的增量索引。
 - 评估是否需要 watcher、上下文自动注入、摘要压缩和更复杂的 profile merge。
-- 把 `LEARNINGS.md`、`ERRORS.md` 的经验性写回纳入更完整的 Learn 阶段，而不是混入当前 memory V1 foundation。
+- `LEARNINGS.md`、`ERRORS.md` 的经验性写回保持最低优先级，避免干扰当前 memory V1 foundation、MCP 接入与智能体编排主线。
 
 ### 7. Scheduler
 **当前已归档能力**
@@ -188,9 +189,9 @@
 - 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation、`reminder.create` 与 Scheduler V1，以及 `memory.search` 的 FTS 升级。
 
 ### P1 剩余目标
-- `LEARNINGS.md`、`ERRORS.md` 写回。
 - MCP Tool 接入。
-- 更完整的 Learn 阶段闭环。
+- 智能体编排基础，包括多步工具编排、受控委派与失败恢复边界。
+- 更完整的 Tool / Agent 执行闭环与上下文压缩。
 
 ### P2 目标
 - 第二个渠道 adapter。
@@ -198,22 +199,22 @@
 - Skill Catalog 与渐进式加载基础设施。
 - 混合检索，包括 FTS5、sqlite-vec、去重、分数归一化和时间衰减。
 - 更完整的可观测性与安全机制。
+- 把 `AGENTS.md` 驱动的委派策略收敛为稳定的智能体编排契约。
 
 ### P3 目标
 - 多渠道统一行为。
-- 更强的工具编排。
-- 多 Agent 协作。
-- `AGENTS.md` 驱动的委派策略。
+- 更强的跨渠道工具编排与多 Agent 协作增强。
 - Skill 执行支撑层增强。
 - 更成熟的 profile / persona 演进。
+- `LEARNINGS.md`、`ERRORS.md` 写回与更完整的 Learn 阶段闭环。
 - 更完整的部署和运维能力。
 
 ## 建议实现顺序（Roadmap）
-1. 收敛 Learn 阶段边界，明确 `LEARNINGS.md` / `ERRORS.md` 的写回策略。
-2. 引入 MCP Tool 接入。
+1. 引入 MCP Tool 接入。
+2. 补齐智能体编排基础，包括多步工具编排、受控委派、超时/失败治理与观测边界。
 3. 接入第二个真实渠道 adapter。
 4. 推进混合检索和更完整的记忆演进能力。
-5. 视需要再扩展多 Agent 协作与更复杂的 Skill 执行支撑。
+5. 最后再收敛 `LEARNINGS.md` / `ERRORS.md` 写回与更完整的 Learn 阶段闭环。
 
 ## 非目标
 - V1 不做 ClaudeCode 风格的 workspace runtime。
