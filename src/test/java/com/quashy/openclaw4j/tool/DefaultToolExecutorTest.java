@@ -1,5 +1,6 @@
 package com.quashy.openclaw4j.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quashy.openclaw4j.domain.InternalConversationId;
 import com.quashy.openclaw4j.domain.InternalUserId;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
@@ -13,11 +14,25 @@ import com.quashy.openclaw4j.tool.runtime.LocalToolRegistry;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationService;
+import com.quashy.openclaw4j.tool.safety.infrastructure.sqlite.SqliteToolSafetyRepository;
+import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
+import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
+import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
+import com.quashy.openclaw4j.tool.safety.policy.ToolPolicyGuard;
+import com.quashy.openclaw4j.tool.safety.validator.FilesystemWriteArgumentValidator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -118,6 +133,63 @@ class DefaultToolExecutorTest {
                     assertThat(success.payload()).containsEntry("conversationId", "conversation-1");
                     assertThat(success.payload()).containsEntry("workspaceRoot", Path.of("workspace").toAbsolutePath().normalize().toString());
                 });
+    }
+
+    /**
+     * 高风险工具在未命中显式确认态时必须返回结构化 `confirmation_required` 错误，而且不能执行真实工具逻辑。
+     */
+    @Test
+    void shouldReturnStructuredConfirmationRequiredWithoutExecutingGuardedTool(@TempDir Path tempDir) {
+        AtomicInteger executionCount = new AtomicInteger();
+        Tool guardedTool = createGuardedFilesystemWriteTool(executionCount);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(guardedTool));
+        DefaultToolExecutor executor = createSecurityAwareExecutor(toolRegistry, tempDir);
+
+        ToolExecutionResult result = executor.execute(new ToolCallRequest(
+                "mcp.filesystem.write_file",
+                Map.of(
+                        "path", "notes/todo.md",
+                        "content", "hello"
+                ),
+                createExecutionContext(tempDir)
+        ));
+
+        assertThat(result)
+                .isInstanceOfSatisfying(ToolExecutionError.class, error -> {
+                    assertThat(error.toolName()).isEqualTo("mcp.filesystem.write_file");
+                    assertThat(error.errorCode()).isEqualTo("confirmation_required");
+                    assertThat(error.details()).containsEntry("policyDecision", "CONFIRMATION_REQUIRED");
+                    assertThat(error.details()).containsKey("confirmationId");
+                });
+        assertThat(executionCount.get()).isZero();
+    }
+
+    /**
+     * filesystem 写请求一旦发生 workspace 逃逸，执行器必须在 transport 前返回结构化拒绝结果。
+     */
+    @Test
+    void shouldReturnStructuredPolicyDeniedWhenFilesystemPathEscapesWorkspace(@TempDir Path tempDir) {
+        AtomicInteger executionCount = new AtomicInteger();
+        Tool guardedTool = createGuardedFilesystemWriteTool(executionCount);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(guardedTool));
+        DefaultToolExecutor executor = createSecurityAwareExecutor(toolRegistry, tempDir);
+
+        ToolExecutionResult result = executor.execute(new ToolCallRequest(
+                "mcp.filesystem.write_file",
+                Map.of(
+                        "path", "../outside.txt",
+                        "content", "unsafe"
+                ),
+                createExecutionContext(tempDir)
+        ));
+
+        assertThat(result)
+                .isInstanceOfSatisfying(ToolExecutionError.class, error -> {
+                    assertThat(error.toolName()).isEqualTo("mcp.filesystem.write_file");
+                    assertThat(error.errorCode()).isEqualTo("policy_denied");
+                    assertThat(error.details()).containsEntry("reasonCode", "filesystem_path_outside_workspace");
+                });
+        assertThat(executionCount.get()).isZero();
     }
 
     /**
@@ -223,5 +295,87 @@ class DefaultToolExecutorTest {
                 );
             }
         };
+    }
+
+    /**
+     * 构造一个带确认策略和 filesystem 写校验的工具，用于验证执行器的前置安全拦截不会放过真实执行。
+     */
+    private Tool createGuardedFilesystemWriteTool(AtomicInteger executionCount) {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        "mcp.filesystem.write_file",
+                        "用于验证待确认和路径拒绝的 filesystem 写工具。",
+                        ToolInputSchema.object(
+                                Map.of(
+                                        "path", new ToolInputProperty("string", "目标路径。"),
+                                        "content", new ToolInputProperty("string", "写入内容。")
+                                ),
+                                List.of("path", "content")
+                        )
+                );
+            }
+
+            @Override
+            public ToolSafetyProfile safetyProfile() {
+                return new ToolSafetyProfile(
+                        ToolRiskLevel.DESTRUCTIVE,
+                        ToolConfirmationPolicy.EXPLICIT,
+                        ToolArgumentValidatorType.FILESYSTEM_WRITE
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                executionCount.incrementAndGet();
+                return Map.of("ok", true);
+            }
+        };
+    }
+
+    /**
+     * 为安全相关用例创建真实策略层依赖，确保测试覆盖确认态创建和参数级校验而不是只测空壳分支。
+     */
+    private DefaultToolExecutor createSecurityAwareExecutor(ToolRegistry toolRegistry, Path workspaceRoot) {
+        Clock clock = Clock.fixed(Instant.parse("2026-04-06T08:00:00Z"), ZoneId.of("Asia/Shanghai"));
+        SqliteToolSafetyRepository repository = new SqliteToolSafetyRepository(
+                workspaceRoot.resolve(".openclaw/tool-safety.sqlite"),
+                new ObjectMapper(),
+                clock
+        );
+        ToolConfirmationService confirmationService = new ToolConfirmationService(
+                repository,
+                repository,
+                new com.quashy.openclaw4j.config.OpenClawProperties.ToolSafetyProperties(
+                        ".openclaw/tool-safety.sqlite",
+                        Duration.ofMinutes(10),
+                        List.of("确认", "继续", "yes", "confirm"),
+                        List.of("AGENTS.md", "SOUL.md", "SKILLS.md")
+                ),
+                new ObjectMapper(),
+                clock
+        );
+        return new DefaultToolExecutor(
+                toolRegistry,
+                new ToolPolicyGuard(
+                        confirmationService,
+                        repository,
+                        new FilesystemWriteArgumentValidator(List.of("AGENTS.md", "SOUL.md", "SKILLS.md"))
+                )
+        );
+    }
+
+    /**
+     * 统一构造带最小身份和 trace 事实的执行上下文，使安全相关用例可以命中确认流状态机。
+     */
+    private ToolExecutionContext createExecutionContext(Path workspaceRoot) {
+        return new ToolExecutionContext(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-1"),
+                new NormalizedDirectMessage("telegram", "external-user-1", "external-conversation-1", "external-message-1", "请执行工具"),
+                new TraceContext("run-guarded", "telegram", "external-conversation-1", "external-message-1", "conversation-1", RuntimeObservationMode.OFF),
+                workspaceRoot
+        );
     }
 }

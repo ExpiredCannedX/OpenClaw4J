@@ -8,6 +8,10 @@ import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
+import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
+import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -47,6 +51,18 @@ public class ReminderCreateTool implements Tool {
                         ),
                         List.of("text", "scheduledAt")
                 )
+        );
+    }
+
+    /**
+     * 声明 `reminder.create` 会持久化新的提醒事实，但当前仍允许在领域服务校验后直接执行。
+     */
+    @Override
+    public ToolSafetyProfile safetyProfile() {
+        return new ToolSafetyProfile(
+                ToolRiskLevel.STATE_CHANGING,
+                ToolConfirmationPolicy.NEVER,
+                ToolArgumentValidatorType.NONE
         );
     }
 

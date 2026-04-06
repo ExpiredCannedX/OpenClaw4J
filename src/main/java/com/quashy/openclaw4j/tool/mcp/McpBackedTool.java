@@ -10,9 +10,14 @@ import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.model.ToolExecutionException;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
+import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
+import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -34,6 +39,11 @@ public class McpBackedTool implements Tool {
      * 承载暴露给注册中心和模型消费的统一工具定义，避免每次调用时重复构造目录元数据。
      */
     private final ToolDefinition definition;
+
+    /**
+     * 承载仅供服务端策略层消费的安全画像，使 MCP 工具也能和本地工具共用统一治理边界。
+     */
+    private final ToolSafetyProfile safetyProfile;
 
     /**
      * 持有已初始化的 MCP session，使工具执行可以复用 discovery 阶段建立的连接。
@@ -61,6 +71,7 @@ public class McpBackedTool implements Tool {
                 discoveredTool.description(),
                 ToolInputSchema.fromJsonSchema(discoveredTool.inputSchema())
         );
+        this.safetyProfile = resolveSafetyProfile(serverAlias, discoveredTool.name());
         this.session = session;
         this.runtimeObservationPublisher = runtimeObservationPublisher;
     }
@@ -71,6 +82,14 @@ public class McpBackedTool implements Tool {
     @Override
     public ToolDefinition definition() {
         return definition;
+    }
+
+    /**
+     * 返回 MCP 工具映射得到的服务端安全画像，使执行器在 transport 调用前就能统一实施策略判定。
+     */
+    @Override
+    public ToolSafetyProfile safetyProfile() {
+        return safetyProfile;
     }
 
     /**
@@ -158,5 +177,34 @@ public class McpBackedTool implements Tool {
             payload.put("errorCode", "invalid_arguments");
         }
         return Map.copyOf(payload);
+    }
+
+    /**
+     * 根据 server alias 和远端工具名映射最小安全画像，优先保护 filesystem 的写/删/移等高风险操作。
+     */
+    private ToolSafetyProfile resolveSafetyProfile(String serverAlias, String remoteToolName) {
+        if (!"filesystem".equals(serverAlias)) {
+            return ToolSafetyProfile.readOnly();
+        }
+        String normalizedToolName = remoteToolName.toLowerCase(Locale.ROOT);
+        if (normalizedToolName.equals("write_file")
+                || normalizedToolName.equals("edit_file")
+                || normalizedToolName.equals("create_directory")) {
+            return new ToolSafetyProfile(
+                    ToolRiskLevel.STATE_CHANGING,
+                    ToolConfirmationPolicy.EXPLICIT,
+                    ToolArgumentValidatorType.FILESYSTEM_WRITE
+            );
+        }
+        if (normalizedToolName.equals("delete_file")
+                || normalizedToolName.equals("move_file")
+                || normalizedToolName.equals("rename_file")) {
+            return new ToolSafetyProfile(
+                    ToolRiskLevel.DESTRUCTIVE,
+                    ToolConfirmationPolicy.EXPLICIT,
+                    ToolArgumentValidatorType.FILESYSTEM_WRITE
+            );
+        }
+        return ToolSafetyProfile.readOnly();
     }
 }

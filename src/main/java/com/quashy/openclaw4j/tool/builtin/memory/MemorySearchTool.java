@@ -8,6 +8,7 @@ import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -48,6 +49,14 @@ public class MemorySearchTool implements Tool {
                         List.of("query")
                 )
         );
+    }
+
+    /**
+     * 声明 `memory.search` 只执行本地检索而不改写记忆事实源，使策略层可直接放行。
+     */
+    @Override
+    public ToolSafetyProfile safetyProfile() {
+        return ToolSafetyProfile.readOnly();
     }
 
     /**

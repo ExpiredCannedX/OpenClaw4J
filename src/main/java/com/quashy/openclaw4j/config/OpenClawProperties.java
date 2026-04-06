@@ -53,7 +53,11 @@ public record OpenClawProperties(
         /**
          * 收敛 memory V1 的本地索引文件配置，避免 SQLite 路径散落在索引器与工具实现中。
          */
-        MemoryProperties memory
+        MemoryProperties memory,
+        /**
+         * 收敛工具执行前安全治理所需的本地数据库、确认短语、过期窗口和敏感文件 denylist 配置。
+         */
+        ToolSafetyProperties toolSafety
 ) {
 
     /**
@@ -70,6 +74,7 @@ public record OpenClawProperties(
         reminder = reminder != null ? reminder : new ReminderProperties(null);
         scheduler = scheduler != null ? scheduler : new SchedulerProperties(null, 0, 0, null);
         memory = memory != null ? memory : new MemoryProperties(null);
+        toolSafety = toolSafety != null ? toolSafety : new ToolSafetyProperties(null, null, null, null);
     }
 
     /**
@@ -264,6 +269,45 @@ public record OpenClawProperties(
          */
         public ReminderProperties {
             databaseFile = StringUtils.hasText(databaseFile) ? databaseFile : ".openclaw/reminders.sqlite";
+        }
+    }
+
+    /**
+     * 描述工具安全治理需要的最小集中配置，使待确认状态、审计、显式确认和敏感文件边界都能统一外置。
+     */
+    public record ToolSafetyProperties(
+            /**
+             * 指向工具安全治理 SQLite 单文件事实源的相对或绝对路径。
+             */
+            String databaseFile,
+            /**
+             * 控制待确认请求的失效窗口，超过后显式确认不再生效。
+             */
+            Duration confirmationTtl,
+            /**
+             * 收敛允许消费待确认项的显式确认短语集合。
+             */
+            List<String> confirmationPhrases,
+            /**
+             * 收敛 workspace 根目录下禁止高风险写操作触达的敏感相对路径集合。
+             */
+            List<String> sensitivePaths
+    ) {
+
+        /**
+         * 为工具安全治理配置提供稳定默认值，保证本地开发和测试在未显式配置时仍具备最小安全边界。
+         */
+        public ToolSafetyProperties {
+            databaseFile = StringUtils.hasText(databaseFile) ? databaseFile : ".openclaw/tool-safety.sqlite";
+            confirmationTtl = confirmationTtl != null && !confirmationTtl.isNegative() && !confirmationTtl.isZero()
+                    ? confirmationTtl
+                    : Duration.ofMinutes(10);
+            confirmationPhrases = confirmationPhrases == null || confirmationPhrases.isEmpty()
+                    ? List.of("确认", "继续", "yes", "confirm")
+                    : List.copyOf(confirmationPhrases);
+            sensitivePaths = sensitivePaths == null || sensitivePaths.isEmpty()
+                    ? List.of("AGENTS.md", "SOUL.md", "SKILLS.md")
+                    : List.copyOf(sensitivePaths);
         }
     }
 

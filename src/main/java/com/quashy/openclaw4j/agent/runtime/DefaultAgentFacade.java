@@ -20,12 +20,17 @@ import com.quashy.openclaw4j.repository.ConversationTurnRepository;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.model.ToolExecutionError;
 import com.quashy.openclaw4j.tool.model.ToolExecutionContext;
 import com.quashy.openclaw4j.tool.model.ToolExecutionResult;
 import com.quashy.openclaw4j.tool.api.ToolExecutor;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
+import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationResolution;
+import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationResolutionStatus;
+import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationService;
 import com.quashy.openclaw4j.workspace.WorkspaceLoader;
 import com.quashy.openclaw4j.workspace.WorkspaceSnapshot;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -87,6 +92,11 @@ public class DefaultAgentFacade implements AgentFacade {
     private final RuntimeObservationPublisher runtimeObservationPublisher;
 
     /**
+     * 负责解析显式确认消息并在命中待确认请求时短路恢复执行；为空时回退为既有常规规划路径。
+     */
+    private final ToolConfirmationService toolConfirmationService;
+
+    /**
      * 通过显式依赖注入固定主链路边界，让渠道层与存储层都不需要知道模型调用和上下文组装的细节。
      */
     public DefaultAgentFacade(
@@ -100,6 +110,36 @@ public class DefaultAgentFacade implements AgentFacade {
             OpenClawProperties properties,
             RuntimeObservationPublisher runtimeObservationPublisher
     ) {
+        this(
+                workspaceLoader,
+                promptAssembler,
+                skillResolver,
+                conversationTurnRepository,
+                agentModelClient,
+                toolRegistry,
+                toolExecutor,
+                properties,
+                runtimeObservationPublisher,
+                null
+        );
+    }
+
+    /**
+     * 通过显式依赖注入固定主链路和确认短路恢复边界，使高风险工具确认不会重新暴露给模型自由规划。
+     */
+    @Autowired
+    public DefaultAgentFacade(
+            WorkspaceLoader workspaceLoader,
+            AgentPromptAssembler promptAssembler,
+            SkillResolver skillResolver,
+            ConversationTurnRepository conversationTurnRepository,
+            AgentModelClient agentModelClient,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            OpenClawProperties properties,
+            RuntimeObservationPublisher runtimeObservationPublisher,
+            ToolConfirmationService toolConfirmationService
+    ) {
         this.workspaceLoader = workspaceLoader;
         this.promptAssembler = promptAssembler;
         this.skillResolver = skillResolver;
@@ -109,6 +149,7 @@ public class DefaultAgentFacade implements AgentFacade {
         this.toolExecutor = toolExecutor;
         this.properties = properties;
         this.runtimeObservationPublisher = runtimeObservationPublisher;
+        this.toolConfirmationService = toolConfirmationService;
     }
 
     /**
@@ -172,9 +213,30 @@ public class DefaultAgentFacade implements AgentFacade {
             );
 
             conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.user(request.message().body()));
+            ToolExecutionResult confirmationObservation = tryResumeConfirmedToolRequest(request, traceContext);
+            if (confirmationObservation != null) {
+                String replyBody = generateFinalReplyFromObservation(
+                        workspaceSnapshot,
+                        selectedSkill,
+                        recentTurns,
+                        request,
+                        traceContext,
+                        confirmationObservation
+                );
+                ReplyEnvelope replyEnvelope = buildReplyEnvelope(request.conversationId(), replyBody, selectedSkill, traceContext);
+                runtimeObservationPublisher.emit(
+                        traceContext,
+                        "agent.run.completed",
+                        RuntimeObservationPhase.AGENT,
+                        RuntimeObservationLevel.INFO,
+                        "DefaultAgentFacade",
+                        Map.of("replyLength", replyEnvelope.body().length())
+                );
+                return replyEnvelope;
+            }
             failureStage = "model_decision";
             runtimeObservationPublisher.emit(
-                    traceContext,
+                traceContext,
                     "agent.model.decision.started",
                     RuntimeObservationPhase.MODEL,
                     RuntimeObservationLevel.INFO,
@@ -447,5 +509,77 @@ public class DefaultAgentFacade implements AgentFacade {
                 traceContext,
                 Path.of(properties.workspaceRoot())
         );
+    }
+
+    /**
+     * 在当前消息是显式确认时尝试短路恢复待确认请求；未命中确认流则返回空值交由常规规划继续处理。
+     */
+    private ToolExecutionResult tryResumeConfirmedToolRequest(AgentRequest request, TraceContext traceContext) {
+        if (toolConfirmationService == null) {
+            return null;
+        }
+        ToolConfirmationResolution resolution = toolConfirmationService.resolveExplicitConfirmation(
+                buildToolExecutionContext(request, traceContext),
+                request.message().body()
+        );
+        if (resolution.status() == ToolConfirmationResolutionStatus.NO_MATCH) {
+            return null;
+        }
+        if (resolution.status() == ToolConfirmationResolutionStatus.REJECTED) {
+            return new ToolExecutionError(
+                    resolution.pendingRecord() == null ? "tool.confirmation" : resolution.pendingRecord().toolName(),
+                    resolution.reasonCode(),
+                    resolution.message(),
+                    Map.of("confirmationStatus", resolution.status().name())
+            );
+        }
+        return toolExecutor.execute(resolution.requestToResume());
+    }
+
+    /**
+     * 统一把工具观察结果回填到最终回复阶段，使常规工具调用和确认短路恢复执行共享同一回复契约。
+     */
+    private String generateFinalReplyFromObservation(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            AgentRequest request,
+            TraceContext traceContext,
+            ToolExecutionResult observation
+    ) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.tool.execution.completed",
+                RuntimeObservationPhase.TOOL,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                buildToolObservationPayload(observation),
+                buildToolObservationVerbosePayload(observation)
+        );
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.final_reply.started",
+                RuntimeObservationPhase.REPLY,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                Map.of("toolName", observation.toolName())
+        );
+        String replyBody = agentModelClient.generateFinalReply(promptAssembler.assembleFinalReplyPrompt(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                request.message(),
+                observation
+        ));
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.final_reply.completed",
+                RuntimeObservationPhase.REPLY,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                Map.of("replyLength", StringUtils.hasText(replyBody) ? replyBody.length() : 0),
+                buildReplyVerbosePayload(replyBody)
+        );
+        return replyBody;
     }
 }

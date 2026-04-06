@@ -8,6 +8,10 @@ import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
+import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
+import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -50,6 +54,18 @@ public class MemoryRememberTool implements Tool {
                         ),
                         List.of("target", "content", "reason")
                 )
+        );
+    }
+
+    /**
+     * 声明 `memory.remember` 会改写本地记忆事实源，但当前仍允许在受控应用服务校验后直接执行。
+     */
+    @Override
+    public ToolSafetyProfile safetyProfile() {
+        return new ToolSafetyProfile(
+                ToolRiskLevel.STATE_CHANGING,
+                ToolConfirmationPolicy.NEVER,
+                ToolArgumentValidatorType.NONE
         );
     }
 

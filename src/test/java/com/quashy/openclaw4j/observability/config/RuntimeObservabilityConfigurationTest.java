@@ -33,7 +33,8 @@ class RuntimeObservabilityConfigurationTest {
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
-                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite"),
+                new OpenClawProperties.ToolSafetyProperties(null, null, null, null)
         );
 
         RuntimeObservationSink sink = configuration.runtimeObservationSink(properties);

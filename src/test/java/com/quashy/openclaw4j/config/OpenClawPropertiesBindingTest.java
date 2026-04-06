@@ -11,15 +11,15 @@ import org.springframework.context.annotation.Configuration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 验证 `application.yaml` 中声明的调试入口、Telegram、MCP、运行期观测以及 reminder/scheduler 配置能够完整绑定到集中配置对象。
+ * 验证 `application.yaml` 中声明的调试入口、Telegram、MCP、运行期观测、工具安全治理以及 reminder/scheduler 配置能够完整绑定到集中配置对象。
  */
 class OpenClawPropertiesBindingTest {
 
     /**
-     * 使用与应用启动一致的 Spring Boot 配置绑定路径，确保运行时真的能从配置源读取调试入口、Telegram、MCP、观测以及 reminder/scheduler 参数。
+     * 使用与应用启动一致的 Spring Boot 配置绑定路径，确保运行时真的能从配置源读取调试入口、Telegram、MCP、观测、工具安全治理以及 reminder/scheduler 参数。
      */
     @Test
-    void shouldBindDebugTelegramMcpObservabilityMemoryAndReminderPropertiesFromConfiguration() {
+    void shouldBindDebugTelegramMcpObservabilityToolSafetyMemoryAndReminderPropertiesFromConfiguration() {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(ConfigurationPropertiesAutoConfiguration.class))
                 .withUserConfiguration(TestConfiguration.class)
@@ -43,6 +43,12 @@ class OpenClawPropertiesBindingTest {
                         "openclaw.observability.mode=VERBOSE",
                         "openclaw.observability.console-enabled=false",
                         "openclaw.observability.verbose-preview-length=64",
+                        "openclaw.tool-safety.database-file=.openclaw/tool-safety.sqlite",
+                        "openclaw.tool-safety.confirmation-ttl=PT12M",
+                        "openclaw.tool-safety.confirmation-phrases[0]=确认",
+                        "openclaw.tool-safety.confirmation-phrases[1]=继续",
+                        "openclaw.tool-safety.sensitive-paths[0]=AGENTS.md",
+                        "openclaw.tool-safety.sensitive-paths[1]=SOUL.md",
                         "openclaw.memory.index-file=.openclaw/memory-index.sqlite",
                         "openclaw.reminder.database-file=.openclaw/reminders.sqlite",
                         "openclaw.scheduler.heartbeat=PT15S",
@@ -70,6 +76,10 @@ class OpenClawPropertiesBindingTest {
                     assertThat(properties.observability().mode()).isEqualTo(RuntimeObservationMode.VERBOSE);
                     assertThat(properties.observability().consoleEnabled()).isFalse();
                     assertThat(properties.observability().verbosePreviewLength()).isEqualTo(64);
+                    assertThat(properties.toolSafety().databaseFile()).isEqualTo(".openclaw/tool-safety.sqlite");
+                    assertThat(properties.toolSafety().confirmationTtl()).hasToString("PT12M");
+                    assertThat(properties.toolSafety().confirmationPhrases()).containsExactly("确认", "继续");
+                    assertThat(properties.toolSafety().sensitivePaths()).containsExactly("AGENTS.md", "SOUL.md");
                     assertThat(properties.memory().indexFile()).isEqualTo(".openclaw/memory-index.sqlite");
                     assertThat(properties.reminder().databaseFile()).isEqualTo(".openclaw/reminders.sqlite");
                     assertThat(properties.scheduler().heartbeat()).hasToString("PT15S");

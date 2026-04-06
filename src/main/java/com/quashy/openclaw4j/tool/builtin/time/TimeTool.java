@@ -4,6 +4,7 @@ import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -54,6 +55,14 @@ public class TimeTool implements Tool {
                 "返回当前服务端时间戳、时区标识和人类可读时间文本。",
                 ToolInputSchema.object(Map.of(), List.of())
         );
+    }
+
+    /**
+     * 声明 `time` 只读取服务端当前时间而不产生副作用，使策略层可直接放行。
+     */
+    @Override
+    public ToolSafetyProfile safetyProfile() {
+        return ToolSafetyProfile.readOnly();
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.quashy.openclaw4j.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quashy.openclaw4j.agent.api.AgentRequest;
 import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
 import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
@@ -42,6 +43,14 @@ import com.quashy.openclaw4j.tool.mcp.McpToolCatalog;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
+import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationService;
+import com.quashy.openclaw4j.tool.safety.infrastructure.sqlite.SqliteToolSafetyRepository;
+import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
+import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
+import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;
+import com.quashy.openclaw4j.tool.safety.model.ToolSafetyProfile;
+import com.quashy.openclaw4j.tool.safety.policy.ToolPolicyGuard;
+import com.quashy.openclaw4j.tool.safety.validator.FilesystemWriteArgumentValidator;
 import com.quashy.openclaw4j.workspace.LocalSkillDocument;
 import com.quashy.openclaw4j.workspace.WorkspaceFileContent;
 import com.quashy.openclaw4j.workspace.WorkspaceLoader;
@@ -59,6 +68,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -206,6 +216,86 @@ class DefaultAgentFacadeTest {
         assertThat(turnRepository.loadRecentTurns(new InternalConversationId("conversation-2"), 10))
                 .extracting(ConversationTurn::content)
                 .containsExactly("现在几点了？", "现在是北京时间 2026-04-03 16:09:10。");
+    }
+
+    /**
+     * 当前消息命中显式确认且会话内存在待确认项时，系统必须短路恢复原始工具请求，而不是再让模型重规划一次。
+     */
+    @Test
+    void shouldResumePendingToolRequestAfterExplicitConfirmation(@TempDir Path workspaceRoot) {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.generateFinalReply(any())).thenReturn("已按确认执行文件写入。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        AtomicInteger executionCount = new AtomicInteger();
+        Tool guardedTool = createGuardedFilesystemWriteTool(executionCount);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(guardedTool));
+        ToolConfirmationService confirmationService = createToolConfirmationService(workspaceRoot);
+        ToolExecutor toolExecutor = new DefaultToolExecutor(
+                toolRegistry,
+                new ToolPolicyGuard(
+                        confirmationService,
+                        new SqliteToolSafetyRepository(
+                                workspaceRoot.resolve(".openclaw/tool-safety.sqlite"),
+                                new ObjectMapper(),
+                                fixedClock()
+                        ),
+                        new FilesystemWriteArgumentValidator(List.of("AGENTS.md", "SOUL.md", "SKILLS.md"))
+                )
+        );
+        ToolCallRequest pendingRequest = new ToolCallRequest(
+                "mcp.filesystem.write_file",
+                Map.of(
+                        "path", "notes/confirmed.md",
+                        "content", "approved"
+                ),
+                new com.quashy.openclaw4j.tool.model.ToolExecutionContext(
+                        new InternalUserId("user-1"),
+                        new InternalConversationId("conversation-confirm"),
+                        new NormalizedDirectMessage("dev", "user-1", "dm-confirm", "msg-pending", "请写文件"),
+                        new TraceContext("run-pending", "dev", "dm-confirm", "msg-pending", "conversation-confirm", RuntimeObservationMode.OFF),
+                        workspaceRoot
+                )
+        );
+        confirmationService.createPendingConfirmation(
+                pendingRequest,
+                new ToolSafetyProfile(
+                        ToolRiskLevel.DESTRUCTIVE,
+                        ToolConfirmationPolicy.EXPLICIT,
+                        ToolArgumentValidatorType.FILESYSTEM_WRITE
+                ),
+                "tool_confirmation_required"
+        );
+        DefaultAgentFacade facade = new DefaultAgentFacade(
+                workspaceLoader,
+                new AgentPromptAssembler(),
+                new SkillResolver(new SkillMarkdownParser()),
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                toolExecutor,
+                createProperties(workspaceRoot),
+                publisher,
+                confirmationService
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-confirm"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-confirm", "msg-confirm", "确认"),
+                new TraceContext("run-confirm", "dev", "dm-confirm", "msg-confirm", "conversation-confirm", RuntimeObservationMode.OFF)
+        ));
+
+        verify(modelClient, never()).decideNextAction(any());
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: mcp.filesystem.write_file")
+                .contains("status: success");
+        assertThat(executionCount.get()).isEqualTo(1);
+        assertThat(replyEnvelope.body()).isEqualTo("已按确认执行文件写入。");
     }
 
     /**
@@ -724,6 +814,43 @@ class DefaultAgentFacadeTest {
     }
 
     /**
+     * 构造一个带显式确认策略的 filesystem 写工具，用于验证确认消息能否恢复真实执行。
+     */
+    private Tool createGuardedFilesystemWriteTool(AtomicInteger executionCount) {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        "mcp.filesystem.write_file",
+                        "用于验证显式确认恢复执行的 filesystem 写工具。",
+                        ToolInputSchema.object(
+                                Map.of(
+                                        "path", new ToolInputProperty("string", "目标路径。"),
+                                        "content", new ToolInputProperty("string", "写入内容。")
+                                ),
+                                List.of("path", "content")
+                        )
+                );
+            }
+
+            @Override
+            public ToolSafetyProfile safetyProfile() {
+                return new ToolSafetyProfile(
+                        ToolRiskLevel.DESTRUCTIVE,
+                        ToolConfirmationPolicy.EXPLICIT,
+                        ToolArgumentValidatorType.FILESYSTEM_WRITE
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                executionCount.incrementAndGet();
+                return Map.of("written", true, "path", request.arguments().get("path"));
+            }
+        };
+    }
+
+    /**
      * 合并本地工具与 MCP 工具列表，避免集成测试为了目录组合逻辑重复手写样板代码。
      */
     private List<Tool> combineTools(List<Tool> localTools, List<Tool> mcpTools) {
@@ -746,7 +873,26 @@ class DefaultAgentFacadeTest {
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
-                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite")
+                new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite"),
+                new OpenClawProperties.ToolSafetyProperties(null, null, null, null)
+        );
+    }
+
+    /**
+     * 为确认恢复执行测试创建真实确认流服务，保证显式确认消息走的就是生产语义而不是手工 stub。
+     */
+    private ToolConfirmationService createToolConfirmationService(Path workspaceRoot) {
+        SqliteToolSafetyRepository repository = new SqliteToolSafetyRepository(
+                workspaceRoot.resolve(".openclaw/tool-safety.sqlite"),
+                new ObjectMapper(),
+                fixedClock()
+        );
+        return new ToolConfirmationService(
+                repository,
+                repository,
+                createProperties(workspaceRoot).toolSafety(),
+                new ObjectMapper(),
+                fixedClock()
         );
     }
 
