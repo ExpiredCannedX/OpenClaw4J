@@ -26,11 +26,11 @@ The system SHALL assign a run-scoped trace identity to each observed direct-mess
 - **THEN** all emitted observation events for that processing flow share the same run-scoped trace identity
 
 ### Requirement: System emits structured lifecycle events at stable execution boundaries
-The system SHALL emit structured lifecycle events at stable execution boundaries for ingress handling, agent execution phases, MCP server initialization, MCP tool discovery, synchronous tool execution, reply dispatch, and failures.
+The system SHALL emit structured lifecycle events at stable execution boundaries for ingress handling, agent execution phases, per-step model planning, synchronous tool execution, orchestration termination, final reply generation, reply dispatch, MCP server initialization, MCP tool discovery, and failures. When a run enters the orchestration loop, those events SHALL carry step-related metadata such as the current step index and terminal reason when applicable.
 
-#### Scenario: MCP-backed agent run emits lifecycle events
-- **WHEN** an eligible run enters the agent flow, executes one synchronous MCP-backed tool call, and returns a final reply
-- **THEN** the emitted observation stream includes structured events for agent execution, MCP tool execution, final reply generation, and reply dispatch
+#### Scenario: Multi-step agent run emits step-scoped lifecycle events
+- **WHEN** an eligible run enters the agent flow, executes more than one synchronous tool step, and returns a final reply
+- **THEN** the emitted observation stream includes structured events for each planning/tool step and the terminal final-reply generation for the same run-scoped trace identity
 
 #### Scenario: Optional MCP server startup failure emits degradation event
 - **WHEN** an optional MCP server fails during startup initialization or tool discovery

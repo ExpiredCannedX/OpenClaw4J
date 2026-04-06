@@ -23,13 +23,14 @@
 
 ## 当前已归档能力总览
 - `single-dm-channel`：开发用单聊入口、真实渠道入口抽象、内部消息标准化、内外部身份映射、活跃会话复用、内部会话到渠道回发目标绑定与幂等去重。
-- `single-dm-agent-core`：统一 Agent 入口、`ReplyEnvelope(body + signals)`、最近会话与 workspace 上下文组装、至多一次受策略约束的同步工具闭环或一次确认恢复执行、最终一次性回复与失败兜底。
+- `single-dm-agent-core`：统一 Agent 入口、`ReplyEnvelope(body + signals)`、workspace/会话/工具/观察上下文组装、最终一次性回复与失败兜底。
+- `agent-orchestration`：单次请求内受 step budget 约束的 `Think -> Act -> Observe` 多步同步工具编排、有序观察累积、预算耗尽与确认态终止边界。
 - `workspace-bootstrap`：`SOUL.md`、`SKILLS.md`、`USER.md`、`MEMORY.md` 的基础加载，静态规则 / 动态记忆 / 本地 Skill 文档分层，以及 `skills/**/SKILL.md` 的稳定发现。
 - `skill-resolution`：`SKILL.md` front matter 解析、显式 Skill 优先、保守自动匹配、单次请求最多选择一个 Skill。
 - `tool-system`：统一工具定义、唯一命名注册中心、服务端安全画像挂载、统一安全判定后的同步执行器、结构化成功/失败结果、内置 `time` 工具。
 - `tool-execution-safety`：服务端工具安全策略层、风险分级、显式确认状态持久化、filesystem 写请求参数级校验、结构化审计日志与不可信内容防绕过边界。
 - `mcp-tool-integration`：`stdio` MCP server 配置、`required/optional` 启动策略、启动期 tool discovery、`mcp.<serverAlias>.<toolName>` 命名，以及纳入统一安全判定和同步调用/降级边界。
-- `runtime-observability`：运行期观测模式、run 级 trace identity、稳定生命周期事件、console sink、按模式裁剪负载。
+- `runtime-observability`：运行期观测模式、run 级 trace identity、稳定生命周期事件（含 per-step planning/tool/termination）、console sink、按模式裁剪负载。
 - `telegram-dm-adapter`：Telegram webhook 鉴权、私聊文本 update 翻译、最终一次性文本回复回传，以及基于已知私聊目标的主动文本发送。
 - `agent-memory`：单用户 workspace 记忆体系、`USER.md` 白名单写入、本地 SQLite 索引、`memory.search`、`memory.remember`，以及显式 FTS5 tokenizer 策略。
 - `scheduler-reminders`：`reminder.create`、一次性提醒持久化、固定 heartbeat 调度、失败重试，以及按内部会话回到原渠道发送提醒。
@@ -54,14 +55,14 @@
 ### 2. Agent Core
 **当前已归档能力**
 - 系统已经具备统一的 Agent 入口，输入标准化单聊请求，输出结构化 `ReplyEnvelope`。
-- 当前上下文组装边界已经明确，包括 workspace 内容、选中的 Skill、最近会话、本地工具与已就绪 MCP 工具目录，以及工具执行结果或策略拦截结果形成的结构化观察。
-- 当前请求内最多执行一次被策略放行的同步工具调用，或者恢复一次已确认的待执行工具请求，再收敛为一条最终一次性回复。
+- 当前上下文组装边界已经明确，包括 workspace 内容、选中的 Skill、最近会话、本地工具与已就绪 MCP 工具目录，以及当前请求内累计的有序结构化观察。
+- 当前请求内已支持受 step budget 约束的 `Think -> Act -> Observe -> Reply` 有界多步闭环；每一步可以继续规划、执行受策略放行的同步工具，或在满足确认条件后恢复一次待执行工具请求。
 - 模型失败、工具失败、工具不可用、策略拒绝或待确认结果都会转换为结构化观察或安全兜底回复，而不是把原始异常抛给渠道层。
 - 当前 Reply 模型锁定为 one-shot final reply，不支持流式 token、消息编辑或中途进度推送。
 
 **Roadmap 目标**
-- 优先把执行循环扩展到更完整的 `Load -> Think -> Act -> Observe -> Reply`，并在已完成的 MCP Tool 接入之上补齐多步工具编排与智能体编排基础。
-- 在保持 one-shot reply 契约的前提下，逐步支持更复杂的工具编排、多步决策、受控委派与后续上下文压缩能力。
+- 在已归档的 `Think -> Act -> Observe -> Reply` 多步闭环基础上，继续补齐受控委派、上下文压缩和更复杂的智能体编排能力。
+- 在保持 one-shot reply 契约的前提下，逐步支持更复杂的多步决策、超时/失败治理细化与受控委派能力。
 - Learn 阶段写回继续保留为远期方向，但当前不作为主线优先事项。
 
 ### 3. Workspace
@@ -98,7 +99,7 @@
 - 当前已具备唯一命名的工具注册中心，以及本地工具和 MCP 工具统一挂载的服务端安全画像。
 - 当前所有同步工具调用都会先经过统一安全策略判定，再收敛为结构化成功、策略拒绝、待确认或执行失败结果。
 - 当前已具备基于 `stdio` 的 MCP server 配置、启动期 tool discovery、`required/optional` 启动策略，以及 `mcp.<serverAlias>.<toolName>` 内部唯一命名规则。
-- 当前 Agent Core 已能把本地工具与已发现 MCP 工具的统一目录暴露给模型，并在一次请求内完成“决策 -> 安全判定 -> 执行或拦截 -> 回填观察 -> 最终回复”的最小闭环。
+- 当前 Agent Core 已能把本地工具与已发现 MCP 工具的统一目录暴露给模型，并在单次请求内完成受 step budget 约束的“规划 -> 安全判定 -> 执行或拦截 -> 回填观察 -> 再规划/最终回复”有界闭环。
 - 当前已归档的本地工具包括 `time`、`memory.search`、`memory.remember`、`reminder.create`。
 - 当前阶段仍明确限制为同步请求-响应型工具，不支持异步工具、后台句柄或进度流。
 
@@ -176,7 +177,7 @@
 
 **相对当前阶段的结论**
 - 最小可信安全边界已经落在“模型完成编排之后、真实工具执行之前”的服务端策略层，而不是 prompt 约束本身。
-- 当前 one-shot、单次同步工具调用约束仍然有助于限制破坏半径，但真正的硬边界来自服务端策略、参数校验和确认态校验。
+- 当前 one-shot reply、step budget 与统一同步执行边界仍然有助于限制破坏半径，但真正的硬边界来自服务端策略、参数校验和确认态校验。
 - 后续工具编排、受控委派、自动化任务和更多 MCP 接入都必须复用这条既有安全链路，而不是旁路实现。
 
 ### 安全 P1
@@ -186,7 +187,7 @@
 - 为不同工具、不同路径和不同会话类型补充更细粒度的 allowlist / denylist 策略。
 
 ### 安全 P2
-- 在多步工具编排、受控委派、自动化任务和后续智能体编排链路中复用统一策略层，不允许新的执行链路绕过既有安全检查。
+- 在现有多步工具编排、后续受控委派、自动化任务和更复杂的智能体编排链路中复用统一策略层，不允许新的执行链路绕过既有安全检查。
 - 扩展更细粒度的安全域和策略模型，例如按工具、按路径、按会话信任级别和按渠道类型施加不同执行边界。
 - 增加更完整的异常检测、风险告警和人工审计能力，让系统具备持续治理而不是一次性拦截。
 
@@ -204,7 +205,7 @@
 ## 上下文组装顺序
 **当前已归档能力**
 - 当前上下文组装以 `SOUL.md`、`SKILLS.md`、选中的 Skill、动态记忆、最近会话和工具目录为核心。
-- 当前工具执行结果或策略拦截结果都会以结构化工具观察回填到最终回复阶段。
+- 当前工具执行结果或策略拦截结果都会以有序结构化工具观察回填到后续 planning 与最终回复阶段。
 - 当前显式 `memory.search` 的结果属于工具观察，而不是自动检索召回注入。
 
 **Roadmap 目标**
@@ -215,11 +216,11 @@
 
 ### 已归档覆盖范围
 - 当前已基本覆盖 P0 的单聊主链路、统一 Agent 入口、基础 workspace 加载、最终一次性回复、基础错误兜底，以及工具调用安全 P0。
-- 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation、`reminder.create` 与 Scheduler V1，以及 `memory.search` 的 FTS 升级。
+- 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、MCP Tool 接入、多步智能体编排基础、运行期可观测性、本地 memory foundation、`reminder.create` 与 Scheduler V1，以及 `memory.search` 的 FTS 升级。
 
 ### P1 剩余目标
-- 智能体编排基础，包括多步工具编排、受控委派与失败恢复边界。
-- 更完整的 Tool / Agent 执行闭环与上下文压缩。
+- 智能体编排 P1 剩余能力，包括受控委派、更细粒度的失败恢复治理和执行边界细化。
+- 更完整的 Tool / Agent 执行闭环配套能力，包括上下文压缩与规划约束强化。
 
 ### P2 目标
 - 第二个渠道 adapter。
@@ -238,7 +239,7 @@
 - 更完整的部署和运维能力。
 
 ## 建议实现顺序（Roadmap）
-1. 在已归档的工具调用安全 P0 基础上，补齐智能体编排基础，包括多步工具编排、受控委派、超时/失败治理与观测边界，并确保新增执行链路复用既有安全策略层。
+1. 在已归档的多步智能体编排基础和工具调用安全 P0 基础上，补齐受控委派、超时/失败治理细化与上下文压缩，并确保新增执行链路复用既有安全策略层。
 2. 推进安全 P1，包括规划提示补强、`filesystem` 读写进一步拆分、dry-run / preview，以及更细粒度的 allowlist / denylist 策略。
 3. 接入第二个真实渠道 adapter。
 4. 推进混合检索和更完整的记忆演进能力。
