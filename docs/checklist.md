@@ -27,6 +27,7 @@
 - `workspace-bootstrap`：`SOUL.md`、`SKILLS.md`、`USER.md`、`MEMORY.md` 的基础加载，静态规则 / 动态记忆 / 本地 Skill 文档分层，以及 `skills/**/SKILL.md` 的稳定发现。
 - `skill-resolution`：`SKILL.md` front matter 解析、显式 Skill 优先、保守自动匹配、单次请求最多选择一个 Skill。
 - `tool-system`：统一工具定义、唯一命名注册中心、同步执行器、结构化成功/失败结果、内置 `time` 工具。
+- `mcp-tool-integration`：`stdio` MCP server 配置、`required/optional` 启动策略、启动期 tool discovery、`mcp.<serverAlias>.<toolName>` 命名和统一同步调用/降级边界。
 - `runtime-observability`：运行期观测模式、run 级 trace identity、稳定生命周期事件、console sink、按模式裁剪负载。
 - `telegram-dm-adapter`：Telegram webhook 鉴权、私聊文本 update 翻译、最终一次性文本回复回传，以及基于已知私聊目标的主动文本发送。
 - `agent-memory`：单用户 workspace 记忆体系、`USER.md` 白名单写入、本地 SQLite 索引、`memory.search`、`memory.remember`，以及显式 FTS5 tokenizer 策略。
@@ -52,13 +53,13 @@
 ### 2. Agent Core
 **当前已归档能力**
 - 系统已经具备统一的 Agent 入口，输入标准化单聊请求，输出结构化 `ReplyEnvelope`。
-- 当前上下文组装边界已经明确，包括 workspace 内容、选中的 Skill、最近会话、工具目录，以及工具执行后的结构化观察结果。
+- 当前上下文组装边界已经明确，包括 workspace 内容、选中的 Skill、最近会话、本地工具与已就绪 MCP 工具目录，以及工具执行后的结构化观察结果。
 - 当前请求内最多允许一次同步工具调用，再收敛为一条最终一次性回复。
 - 模型失败、工具失败或工具不可用时，系统会转换为结构化观察或安全兜底回复，而不是把原始异常抛给渠道层。
 - 当前 Reply 模型锁定为 one-shot final reply，不支持流式 token、消息编辑或中途进度推送。
 
 **Roadmap 目标**
-- 优先把执行循环扩展到更完整的 `Load -> Think -> Act -> Observe -> Reply`，先补齐 MCP 接入前提下的多步工具编排与智能体编排基础。
+- 优先把执行循环扩展到更完整的 `Load -> Think -> Act -> Observe -> Reply`，并在已完成的 MCP Tool 接入之上补齐多步工具编排与智能体编排基础。
 - 在保持 one-shot reply 契约的前提下，逐步支持更复杂的工具编排、多步决策、受控委派与后续上下文压缩能力。
 - Learn 阶段写回继续保留为远期方向，但当前不作为主线优先事项。
 
@@ -92,16 +93,16 @@
 
 ### 5. Tool System
 **当前已归档能力**
-- 当前 Tool System 已具备统一 Tool API，包括工具名、描述、输入 schema、成功结果和错误结果。
+- 当前 Tool System 已具备统一 Tool API，包括工具名、描述、基于通用 JSON Schema 的输入 schema、成功结果和错误结果。
 - 当前已具备唯一命名的工具注册中心和同步执行器。
-- 当前 Agent Core 已能把可用工具目录暴露给模型，并在一次请求内完成“决策 -> 执行一次工具 -> 回填观察 -> 最终回复”的最小闭环。
+- 当前已具备基于 `stdio` 的 MCP server 配置、启动期 tool discovery、`required/optional` 启动策略，以及 `mcp.<serverAlias>.<toolName>` 内部唯一命名规则。
+- 当前 Agent Core 已能把本地工具与已发现 MCP 工具的统一目录暴露给模型，并在一次请求内完成“决策 -> 执行一次工具 -> 回填观察 -> 最终回复”的最小闭环。
 - 当前已归档的本地工具包括 `time`、`memory.search`、`memory.remember`、`reminder.create`。
 - 当前阶段仍明确限制为同步请求-响应型工具，不支持异步工具、后台句柄或进度流。
 
 **Roadmap 目标**
 - 补齐更多业务工具，例如 `reminder.list`、`reminder.update`、`reminder.cancel` 等提醒治理能力。
-- 优先补齐 MCP Tool Discovery / Invocation 接入，但仍不要求 Resource、Prompt 等非工具能力。
-- 围绕 MCP Tool 接入补齐工具编排、超时/失败治理与可观测性边界，为后续智能体编排提供稳定执行基座。
+- 围绕已接入的 MCP Tool foundation 继续补齐工具编排、超时/失败治理与可观测性边界，为后续智能体编排提供稳定执行基座。
 - 逐步扩展更多业务工具，并在需要时再评估异步工具协议。
 
 ### 6. Memory / Retrieval
@@ -121,7 +122,7 @@
 - 增加 `memory.update`、`memory.forget`、`memory.get`、`event log` 等更完整的记忆操作能力。
 - 引入向量检索、混合检索、分数归一化、时间衰减与更细粒度的增量索引。
 - 评估是否需要 watcher、上下文自动注入、摘要压缩和更复杂的 profile merge。
-- `LEARNINGS.md`、`ERRORS.md` 的经验性写回保持最低优先级，避免干扰当前 memory V1 foundation、MCP 接入与智能体编排主线。
+- `LEARNINGS.md`、`ERRORS.md` 的经验性写回保持最低优先级，避免干扰当前 memory V1 foundation、MCP Tool foundation 演进与智能体编排主线。
 
 ### 7. Scheduler
 **当前已归档能力**
@@ -151,9 +152,9 @@
 **当前已归档能力**
 - 当前运行期可观测性已具备 `OFF / ERRORS / TIMELINE / VERBOSE` 模式，并默认使用摘要 timeline 模式。
 - 当前每次消息处理都具备 run-scoped trace identity。
-- 当前系统已在 ingress、agent、tool、reply dispatch 和 failure 边界上发出结构化生命周期事件。
+- 当前系统已在 ingress、agent、MCP server 初始化、tool discovery、tool、reply dispatch 和 failure 边界上发出结构化生命周期事件。
 - 当前已具备 pluggable sink 抽象与 console sink。
-- 当前详细负载暴露会按观测模式裁剪，不会默认泄漏完整 prompt、workspace 或原始模型输出。
+- 当前详细负载暴露会按观测模式裁剪，不会默认泄漏完整 prompt、workspace、MCP 命令环境或原始模型输出。
 - 当前 memory 写入、memory 检索、索引刷新、提醒创建、提醒调度与工具失败已经具备明确的失败边界和观测留痕。
 
 **Roadmap 目标**
@@ -189,7 +190,6 @@
 - 当前已覆盖 P1 的一部分，包括 Skill resolution、同步 Tool System foundation、运行期可观测性、本地 memory foundation、`reminder.create` 与 Scheduler V1，以及 `memory.search` 的 FTS 升级。
 
 ### P1 剩余目标
-- MCP Tool 接入。
 - 智能体编排基础，包括多步工具编排、受控委派与失败恢复边界。
 - 更完整的 Tool / Agent 执行闭环与上下文压缩。
 
@@ -210,11 +210,10 @@
 - 更完整的部署和运维能力。
 
 ## 建议实现顺序（Roadmap）
-1. 引入 MCP Tool 接入。
-2. 补齐智能体编排基础，包括多步工具编排、受控委派、超时/失败治理与观测边界。
-3. 接入第二个真实渠道 adapter。
-4. 推进混合检索和更完整的记忆演进能力。
-5. 最后再收敛 `LEARNINGS.md` / `ERRORS.md` 写回与更完整的 Learn 阶段闭环。
+1. 补齐智能体编排基础，包括多步工具编排、受控委派、超时/失败治理与观测边界。
+2. 接入第二个真实渠道 adapter。
+3. 推进混合检索和更完整的记忆演进能力。
+4. 最后再收敛 `LEARNINGS.md` / `ERRORS.md` 写回与更完整的 Learn 阶段闭环。
 
 ## 非目标
 - V1 不做 ClaudeCode 风格的 workspace runtime。

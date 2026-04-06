@@ -26,15 +26,15 @@ The system SHALL assign a run-scoped trace identity to each observed direct-mess
 - **THEN** all emitted observation events for that processing flow share the same run-scoped trace identity
 
 ### Requirement: System emits structured lifecycle events at stable execution boundaries
-The system SHALL emit structured lifecycle events at stable execution boundaries for ingress handling, agent execution phases, synchronous tool execution, reply dispatch, and failures.
+The system SHALL emit structured lifecycle events at stable execution boundaries for ingress handling, agent execution phases, MCP server initialization, MCP tool discovery, synchronous tool execution, reply dispatch, and failures.
 
-#### Scenario: Tool-backed agent run emits lifecycle events
-- **WHEN** an eligible run enters the agent flow, executes one synchronous tool call, and returns a final reply
-- **THEN** the emitted observation stream includes structured events for ingress acceptance, agent execution, tool execution, final reply generation, and reply dispatch
+#### Scenario: MCP-backed agent run emits lifecycle events
+- **WHEN** an eligible run enters the agent flow, executes one synchronous MCP-backed tool call, and returns a final reply
+- **THEN** the emitted observation stream includes structured events for agent execution, MCP tool execution, final reply generation, and reply dispatch
 
-#### Scenario: Failed run emits failure event
-- **WHEN** model invocation, tool execution, or reply dispatch fails during an eligible run
-- **THEN** the system emits a structured failure event that identifies the failed stage and outcome
+#### Scenario: Optional MCP server startup failure emits degradation event
+- **WHEN** an optional MCP server fails during startup initialization or tool discovery
+- **THEN** the system emits a structured observation event that identifies the server alias, the degraded stage, and the downgraded outcome
 
 ### Requirement: System keeps runtime observations separate from user-visible reply payloads
 The system SHALL keep runtime observation data out of user-visible reply bodies and out of result-level reply signals.
@@ -51,15 +51,15 @@ The system SHALL route runtime observation events through a sink abstraction and
 - **THEN** the system writes the emitted runtime observation events to the process console in developer-visible form
 
 ### Requirement: System limits detailed payload exposure by observation mode
-The system SHALL limit large or sensitive payload details by observation mode and SHALL only include detailed previews in the most verbose mode.
+The system SHALL limit large or sensitive payload details by observation mode and SHALL only include detailed previews in the most verbose mode. This limit SHALL also apply to MCP-related command metadata, tool arguments, result previews, and configuration-derived sensitive values.
 
 #### Scenario: Timeline mode uses summary metadata only
 - **WHEN** the runtime observation mode is `TIMELINE`
-- **THEN** the emitted observation events include summary metadata rather than full prompt, workspace, or raw model payload content
+- **THEN** the emitted observation events include summary metadata rather than full prompt, workspace, raw MCP payloads, command environment variables, or complete model output content
 
-#### Scenario: Verbose mode includes truncated previews
+#### Scenario: Verbose mode includes truncated previews without secret leakage
 - **WHEN** the runtime observation mode is `VERBOSE`
-- **THEN** the emitted observation events may include truncated preview fields for debugging without requiring the system to expose unrestricted raw payloads
+- **THEN** the emitted observation events may include truncated preview fields for debugging without exposing unrestricted raw payloads or sensitive configuration values
 
 ### Requirement: System defines runtime observation defaults in application configuration
 The system SHALL define the runtime observation configuration defaults in `application.yaml` so the default mode and sink behavior are explicit and centrally managed.
