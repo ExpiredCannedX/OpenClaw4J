@@ -51,6 +51,8 @@ openclaw:
     mode: ${OPENCLAW_OBSERVABILITY_MODE:VERBOSE}
     console-enabled: ${OPENCLAW_OBSERVABILITY_CONSOLE_ENABLED:true}
     verbose-preview-length: ${OPENCLAW_OBSERVABILITY_VERBOSE_PREVIEW_LENGTH:99999}
+  orchestration:
+    max-steps: ${OPENCLAW_ORCHESTRATION_MAX_STEPS:4}
   reminder:
     database-file: ${OPENCLAW_REMINDER_DATABASE_FILE:.openclaw/reminders.sqlite}
   scheduler:

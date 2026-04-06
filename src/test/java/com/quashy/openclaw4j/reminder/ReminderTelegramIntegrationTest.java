@@ -1,5 +1,6 @@
 package com.quashy.openclaw4j.reminder;
 
+import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
 import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
 import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.channel.telegram.TelegramOutboundClient;
@@ -103,13 +104,15 @@ class ReminderTelegramIntegrationTest {
      */
     @Test
     void shouldCreatePersistAndProactivelyDeliverTelegramReminder() throws Exception {
-        when(agentModelClient.decideNextAction(any())).thenReturn(new ToolCallDecision(
-                "reminder.create",
-                Map.of(
-                        "text", "十点零五提醒我开会",
-                        "scheduledAt", "2026-04-05T10:05:00+08:00"
-                )
-        ));
+        when(agentModelClient.decideNextAction(any()))
+                .thenReturn(new ToolCallDecision(
+                        "reminder.create",
+                        Map.of(
+                                "text", "十点零五提醒我开会",
+                                "scheduledAt", "2026-04-05T10:05:00+08:00"
+                        )
+                ))
+                .thenReturn(new FinalReplyDecision("提醒已经创建完成"));
         when(agentModelClient.generateFinalReply(any())).thenReturn("好的，到时提醒你。");
 
         mockMvc.perform(post("/api/telegram/webhook")

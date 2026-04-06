@@ -41,7 +41,7 @@ import java.util.Optional;
 import java.nio.file.Path;
 
 /**
- * 提供当前 change 所需的最小 Agent 主链路实现，负责 workspace 加载、上下文组装、模型调用和失败兜底。
+ * 提供当前 change 所需的 Agent 主链路实现，负责 workspace 加载、有界多步编排、模型调用和失败兜底。
  */
 @Service
 public class DefaultAgentFacade implements AgentFacade {
@@ -153,7 +153,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 执行一次完整的最小单聊推理流程，并在“直接回复”与“单次工具调用”之间进行有界闭环。
+     * 执行一次完整的单聊推理流程，并在“直接回复”与“有界多步工具编排”之间进行 request-local 闭环。
      */
     @Override
     public ReplyEnvelope reply(AgentRequest request) {
@@ -213,119 +213,67 @@ public class DefaultAgentFacade implements AgentFacade {
             );
 
             conversationTurnRepository.appendTurn(request.conversationId(), ConversationTurn.user(request.message().body()));
-            ToolExecutionResult confirmationObservation = tryResumeConfirmedToolRequest(request, traceContext);
-            if (confirmationObservation != null) {
-                String replyBody = generateFinalReplyFromObservation(
+            AgentOrchestrationState orchestrationState = new AgentOrchestrationState(properties.orchestration().maxSteps());
+            FinalReplyDecision planningFinalReply = null;
+
+            failureStage = "confirmation_resolve";
+            ToolConfirmationResolution confirmationResolution = resolveConfirmedToolRequest(request, traceContext);
+            if (confirmationResolution != null) {
+                if (confirmationResolution.status() == ToolConfirmationResolutionStatus.REJECTED) {
+                    orchestrationState = orchestrationState
+                            .appendObservation(buildRejectedConfirmationObservation(confirmationResolution))
+                            .withTerminalReason(AgentOrchestrationTerminalReason.FINAL_REPLY);
+                } else {
+                    failureStage = "tool_execution";
+                    ToolExecutionResult confirmationObservation = executeToolStep(
+                            confirmationResolution.requestToResume(),
+                            traceContext,
+                            orchestrationState
+                    );
+                    orchestrationState = advanceStateAfterObservation(orchestrationState, confirmationObservation);
+                }
+            }
+
+            failureStage = "orchestration_loop";
+            while (!orchestrationState.isTerminal()) {
+                failureStage = "model_decision";
+                AgentModelDecision decision = decideNextAction(
                         workspaceSnapshot,
                         selectedSkill,
                         recentTurns,
                         request,
                         traceContext,
-                        confirmationObservation
+                        orchestrationState
                 );
-                ReplyEnvelope replyEnvelope = buildReplyEnvelope(request.conversationId(), replyBody, selectedSkill, traceContext);
-                runtimeObservationPublisher.emit(
+                if (decision instanceof FinalReplyDecision finalReplyDecision) {
+                    planningFinalReply = finalReplyDecision;
+                    orchestrationState = orchestrationState.withTerminalReason(AgentOrchestrationTerminalReason.FINAL_REPLY);
+                    break;
+                }
+                failureStage = "tool_execution";
+                ToolCallDecision toolCallDecision = (ToolCallDecision) decision;
+                ToolExecutionResult observation = executeToolStep(
+                        new ToolCallRequest(
+                                toolCallDecision.toolName(),
+                                toolCallDecision.arguments(),
+                                buildToolExecutionContext(request, traceContext)
+                        ),
                         traceContext,
-                        "agent.run.completed",
-                        RuntimeObservationPhase.AGENT,
-                        RuntimeObservationLevel.INFO,
-                        "DefaultAgentFacade",
-                        Map.of("replyLength", replyEnvelope.body().length())
+                        orchestrationState
                 );
-                return replyEnvelope;
+                orchestrationState = advanceStateAfterObservation(orchestrationState, observation);
             }
-            failureStage = "model_decision";
-            runtimeObservationPublisher.emit(
-                traceContext,
-                    "agent.model.decision.started",
-                    RuntimeObservationPhase.MODEL,
-                    RuntimeObservationLevel.INFO,
-                    "DefaultAgentFacade",
-                    Map.of("toolDefinitionCount", toolRegistry.listDefinitions().size())
-            );
 
-            // promptAssembler 会把工作区快照、会话历史、解析出的技能、最新的用户消息以及所有可用工具的定义组合成一个完整的、结构化的提示词 (Prompt)。
-            // 将组装好的提示词发送给大语言模型 (LLM)，让模型来决定下一步行动。这个决策 (AgentModelDecision) 主要有两种可能：
-            // 1.FinalReplyDecision: 模型认为信息已经足够，可以直接生成最终回复。
-            // 2.ToolCallDecision: 模型认为需要调用一个工具 (Tool) 来获取额外信息或执行某个操作。
-            AgentModelDecision decision = agentModelClient.decideNextAction(promptAssembler.assemblePlanningPrompt(
+            failureStage = "final_reply_generation";
+            String replyBody = resolveReplyBody(
                     workspaceSnapshot,
                     selectedSkill,
                     recentTurns,
-                    request.message(),
-                    toolRegistry.listDefinitions()
-            ));
-            runtimeObservationPublisher.emit(
+                    request,
                     traceContext,
-                    "agent.model.decision.completed",
-                    RuntimeObservationPhase.MODEL,
-                    RuntimeObservationLevel.INFO,
-                    "DefaultAgentFacade",
-                    buildDecisionPayload(decision)
+                    orchestrationState,
+                    planningFinalReply
             );
-            String replyBody;
-
-            // 如果决策是“直接回复”:
-            // 流程: 直接从 FinalReplyDecision 中提取回复文本。
-            if (decision instanceof FinalReplyDecision finalReplyDecision) {
-                replyBody = finalReplyDecision.reply();
-            } else {
-                // 如果决策是“单次工具调用”:
-                ToolCallDecision toolCallDecision = (ToolCallDecision) decision;
-                failureStage = "tool_execution";
-                runtimeObservationPublisher.emit(
-                        traceContext,
-                        "agent.tool.execution.started",
-                        RuntimeObservationPhase.TOOL,
-                        RuntimeObservationLevel.INFO,
-                        "DefaultAgentFacade",
-                        Map.of("toolName", toolCallDecision.toolName())
-                );
-                // 根据 ToolCallDecision 中的指令，执行相应的工具代码，并获得一个执行结果 (ToolExecutionResult)。
-                ToolExecutionResult observation = toolExecutor.execute(new ToolCallRequest(
-                        toolCallDecision.toolName(),
-                        toolCallDecision.arguments(),
-                        buildToolExecutionContext(request, traceContext)
-                ));
-
-                runtimeObservationPublisher.emit(
-                        traceContext,
-                        "agent.tool.execution.completed",
-                        RuntimeObservationPhase.TOOL,
-                        RuntimeObservationLevel.INFO,
-                        "DefaultAgentFacade",
-                        buildToolObservationPayload(observation),
-                        buildToolObservationVerbosePayload(observation)
-                );
-                failureStage = "final_reply_generation";
-                runtimeObservationPublisher.emit(
-                        traceContext,
-                        "agent.model.final_reply.started",
-                        RuntimeObservationPhase.REPLY,
-                        RuntimeObservationLevel.INFO,
-                        "DefaultAgentFacade",
-                        Map.of("toolName", toolCallDecision.toolName())
-                );
-
-                // promptAssembler 会把原始上下文、工具调用结果等信息再次组装成一个新的提示词，发送给模型，要求它基于工具返回的信息生成最终的人类可读的回复。
-                replyBody = agentModelClient.generateFinalReply(promptAssembler.assembleFinalReplyPrompt(
-                        workspaceSnapshot,
-                        selectedSkill,
-                        recentTurns,
-                        request.message(),
-                        observation
-                ));
-
-                runtimeObservationPublisher.emit(
-                        traceContext,
-                        "agent.model.final_reply.completed",
-                        RuntimeObservationPhase.REPLY,
-                        RuntimeObservationLevel.INFO,
-                        "DefaultAgentFacade",
-                        Map.of("replyLength", StringUtils.hasText(replyBody) ? replyBody.length() : 0),
-                        buildReplyVerbosePayload(replyBody)
-                );
-            }
 
             ReplyEnvelope replyEnvelope = buildReplyEnvelope(request.conversationId(), replyBody, selectedSkill, traceContext);
             runtimeObservationPublisher.emit(
@@ -352,6 +300,230 @@ public class DefaultAgentFacade implements AgentFacade {
             );
             return fallbackReply(request.conversationId(), traceContext, failureStage);
         }
+    }
+
+    /**
+     * 在每一轮 planning 前统一组装带预算与观察历史的 prompt，并为 step 级调试输出稳定的模型决策事件。
+     */
+    private AgentModelDecision decideNextAction(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            AgentRequest request,
+            TraceContext traceContext,
+            AgentOrchestrationState orchestrationState
+    ) {
+        List<com.quashy.openclaw4j.tool.schema.ToolDefinition> availableTools = toolRegistry.listDefinitions();
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.decision.started",
+                RuntimeObservationPhase.MODEL,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(
+                        Map.of("toolDefinitionCount", availableTools.size()),
+                        orchestrationState
+                )
+        );
+        AgentModelDecision decision = agentModelClient.decideNextAction(promptAssembler.assemblePlanningPrompt(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                request.message(),
+                availableTools,
+                orchestrationState
+        ));
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.decision.completed",
+                RuntimeObservationPhase.MODEL,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(buildDecisionPayload(decision), orchestrationState)
+        );
+        return decision;
+    }
+
+    /**
+     * 执行单个工具 step，并把 step 序号与执行结果一并写入运行时观测，确保后续排障能精确定位每一轮动作。
+     */
+    private ToolExecutionResult executeToolStep(
+            ToolCallRequest toolCallRequest,
+            TraceContext traceContext,
+            AgentOrchestrationState orchestrationState
+    ) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.tool.execution.started",
+                RuntimeObservationPhase.TOOL,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(Map.of("toolName", toolCallRequest.toolName()), orchestrationState)
+        );
+        ToolExecutionResult observation = toolExecutor.execute(toolCallRequest);
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.tool.execution.completed",
+                RuntimeObservationPhase.TOOL,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(buildToolObservationPayload(observation), orchestrationState),
+                buildToolObservationVerbosePayload(observation)
+        );
+        return observation;
+    }
+
+    /**
+     * 根据本次工具观察推进编排状态，并在确认态或预算耗尽时立即标记硬终止原因。
+     */
+    private AgentOrchestrationState advanceStateAfterObservation(
+            AgentOrchestrationState orchestrationState,
+            ToolExecutionResult observation
+    ) {
+        AgentOrchestrationState nextState = orchestrationState.appendObservation(observation);
+        if (isConfirmationRequiredObservation(observation)) {
+            return nextState.withTerminalReason(AgentOrchestrationTerminalReason.CONFIRMATION_REQUIRED);
+        }
+        if (nextState.remainingSteps() == 0) {
+            return nextState.withTerminalReason(AgentOrchestrationTerminalReason.STEP_BUDGET_EXHAUSTED);
+        }
+        return nextState;
+    }
+
+    /**
+     * 在编排循环结束后统一选择“直接复用 planning final reply”或“基于累计观察再生成最终回复”的收敛路径。
+     */
+    private String resolveReplyBody(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            AgentRequest request,
+            TraceContext traceContext,
+            AgentOrchestrationState orchestrationState,
+            FinalReplyDecision planningFinalReply
+    ) {
+        emitOrchestrationTerminated(traceContext, orchestrationState);
+        if (!orchestrationState.hasObservationHistory()) {
+            String replyBody = planningFinalReply == null ? null : planningFinalReply.reply();
+            emitFinalReplyStarted(traceContext, orchestrationState);
+            emitFinalReplyCompleted(traceContext, orchestrationState, replyBody);
+            return replyBody;
+        }
+        return generateFinalReplyFromObservations(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                request,
+                traceContext,
+                orchestrationState
+        );
+    }
+
+    /**
+     * 在终止点统一发布编排结束事件，使 step budget、终止原因和累计观察数量都能进入运行时时间线。
+     */
+    private void emitOrchestrationTerminated(TraceContext traceContext, AgentOrchestrationState orchestrationState) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.orchestration.terminated",
+                RuntimeObservationPhase.AGENT,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(
+                        Map.of(
+                                "observationCount", orchestrationState.observationHistory().size(),
+                                "terminalReason", orchestrationState.terminalReason().wireValue()
+                        ),
+                        orchestrationState
+                )
+        );
+    }
+
+    /**
+     * 在真正生成用户可见最终回复前发布统一起始事件，确保 direct reply 与 observation-backed reply 共享同一观测边界。
+     */
+    private void emitFinalReplyStarted(TraceContext traceContext, AgentOrchestrationState orchestrationState) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.final_reply.started",
+                RuntimeObservationPhase.REPLY,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(Map.of(), orchestrationState)
+        );
+    }
+
+    /**
+     * 在最终回复正文产生后统一输出 step 级摘要与可选预览，避免不同收敛路径分叉出不同的观测格式。
+     */
+    private void emitFinalReplyCompleted(
+            TraceContext traceContext,
+            AgentOrchestrationState orchestrationState,
+            String replyBody
+    ) {
+        runtimeObservationPublisher.emit(
+                traceContext,
+                "agent.model.final_reply.completed",
+                RuntimeObservationPhase.REPLY,
+                RuntimeObservationLevel.INFO,
+                "DefaultAgentFacade",
+                withOrchestrationContext(
+                        Map.of("replyLength", StringUtils.hasText(replyBody) ? replyBody.length() : 0),
+                        orchestrationState
+                ),
+                buildReplyVerbosePayload(replyBody)
+        );
+    }
+
+    /**
+     * 在显式确认服务存在时解析当前消息是否命中待确认请求；未命中时返回空值以继续常规规划路径。
+     */
+    private ToolConfirmationResolution resolveConfirmedToolRequest(AgentRequest request, TraceContext traceContext) {
+        if (toolConfirmationService == null) {
+            return null;
+        }
+        ToolConfirmationResolution resolution = toolConfirmationService.resolveExplicitConfirmation(
+                buildToolExecutionContext(request, traceContext),
+                request.message().body()
+        );
+        return resolution.status() == ToolConfirmationResolutionStatus.NO_MATCH ? null : resolution;
+    }
+
+    /**
+     * 把显式确认解析失败收敛为结构化错误观察，保证确认拒绝路径也能沿用统一的最终回复 prompt 契约。
+     */
+    private ToolExecutionError buildRejectedConfirmationObservation(ToolConfirmationResolution resolution) {
+        return new ToolExecutionError(
+                resolution.pendingRecord() == null ? "tool.confirmation" : resolution.pendingRecord().toolName(),
+                resolution.reasonCode(),
+                resolution.message(),
+                Map.of("confirmationStatus", resolution.status().name())
+        );
+    }
+
+    /**
+     * 判断本次工具观察是否命中了必须等待用户下一条消息的确认边界，避免系统在同一请求内继续越过安全暂停点。
+     */
+    private boolean isConfirmationRequiredObservation(ToolExecutionResult observation) {
+        return observation instanceof ToolExecutionError error
+                && "confirmation_required".equals(error.errorCode());
+    }
+
+    /**
+     * 把 step budget 与终止元数据统一并入事件摘要，避免每个调用点重复拼接并导致字段漂移。
+     */
+    private Map<String, Object> withOrchestrationContext(
+            Map<String, Object> payload,
+            AgentOrchestrationState orchestrationState
+    ) {
+        LinkedHashMap<String, Object> enrichedPayload = new LinkedHashMap<>(payload);
+        enrichedPayload.put("stepIndex", orchestrationState.currentStepIndex());
+        enrichedPayload.put("maxSteps", orchestrationState.maxSteps());
+        enrichedPayload.put("remainingSteps", orchestrationState.remainingSteps());
+        if (orchestrationState.terminalReason() != null) {
+            enrichedPayload.put("terminalReason", orchestrationState.terminalReason().wireValue());
+        }
+        return Map.copyOf(enrichedPayload);
     }
 
     /**
@@ -512,74 +684,25 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在当前消息是显式确认时尝试短路恢复待确认请求；未命中确认流则返回空值交由常规规划继续处理。
+     * 统一把累计工具观察结果回填到最终回复阶段，使常规多步工具调用与确认恢复执行共享同一收敛契约。
      */
-    private ToolExecutionResult tryResumeConfirmedToolRequest(AgentRequest request, TraceContext traceContext) {
-        if (toolConfirmationService == null) {
-            return null;
-        }
-        ToolConfirmationResolution resolution = toolConfirmationService.resolveExplicitConfirmation(
-                buildToolExecutionContext(request, traceContext),
-                request.message().body()
-        );
-        if (resolution.status() == ToolConfirmationResolutionStatus.NO_MATCH) {
-            return null;
-        }
-        if (resolution.status() == ToolConfirmationResolutionStatus.REJECTED) {
-            return new ToolExecutionError(
-                    resolution.pendingRecord() == null ? "tool.confirmation" : resolution.pendingRecord().toolName(),
-                    resolution.reasonCode(),
-                    resolution.message(),
-                    Map.of("confirmationStatus", resolution.status().name())
-            );
-        }
-        return toolExecutor.execute(resolution.requestToResume());
-    }
-
-    /**
-     * 统一把工具观察结果回填到最终回复阶段，使常规工具调用和确认短路恢复执行共享同一回复契约。
-     */
-    private String generateFinalReplyFromObservation(
+    private String generateFinalReplyFromObservations(
             WorkspaceSnapshot workspaceSnapshot,
             Optional<ResolvedSkill> selectedSkill,
             List<ConversationTurn> recentTurns,
             AgentRequest request,
             TraceContext traceContext,
-            ToolExecutionResult observation
+            AgentOrchestrationState orchestrationState
     ) {
-        runtimeObservationPublisher.emit(
-                traceContext,
-                "agent.tool.execution.completed",
-                RuntimeObservationPhase.TOOL,
-                RuntimeObservationLevel.INFO,
-                "DefaultAgentFacade",
-                buildToolObservationPayload(observation),
-                buildToolObservationVerbosePayload(observation)
-        );
-        runtimeObservationPublisher.emit(
-                traceContext,
-                "agent.model.final_reply.started",
-                RuntimeObservationPhase.REPLY,
-                RuntimeObservationLevel.INFO,
-                "DefaultAgentFacade",
-                Map.of("toolName", observation.toolName())
-        );
+        emitFinalReplyStarted(traceContext, orchestrationState);
         String replyBody = agentModelClient.generateFinalReply(promptAssembler.assembleFinalReplyPrompt(
                 workspaceSnapshot,
                 selectedSkill,
                 recentTurns,
                 request.message(),
-                observation
+                orchestrationState
         ));
-        runtimeObservationPublisher.emit(
-                traceContext,
-                "agent.model.final_reply.completed",
-                RuntimeObservationPhase.REPLY,
-                RuntimeObservationLevel.INFO,
-                "DefaultAgentFacade",
-                Map.of("replyLength", StringUtils.hasText(replyBody) ? replyBody.length() : 0),
-                buildReplyVerbosePayload(replyBody)
-        );
+        emitFinalReplyCompleted(traceContext, orchestrationState, replyBody);
         return replyBody;
     }
 }

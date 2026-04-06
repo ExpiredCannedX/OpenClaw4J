@@ -74,6 +74,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -219,6 +220,153 @@ class DefaultAgentFacadeTest {
     }
 
     /**
+     * 当同一请求需要连续两个工具观察后才能回答时，系统必须在剩余预算内继续规划，并按顺序把历史观察回填到后续 planning/final-reply prompt。
+     */
+    @Test
+    void shouldContinuePlanningWithOrderedObservationsUntilModelRequestsFinalReply() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any()))
+                .thenReturn(new ToolCallDecision("first", Map.of()))
+                .thenReturn(new ToolCallDecision("second", Map.of()))
+                .thenReturn(new FinalReplyDecision("规划阶段已经足够"));
+        when(modelClient.generateFinalReply(any())).thenReturn("这是整合两次工具观察后的最终回复。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(
+                createSuccessTool("first", Map.of("step", "one")),
+                createSuccessTool("second", Map.of("step", "two"))
+        ));
+        DefaultAgentFacade facade = createFacade(workspaceLoader, turnRepository, modelClient, toolRegistry, new DefaultToolExecutor(toolRegistry));
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-multi-step"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-multi-step", "msg-multi-step", "请串行完成两个步骤"),
+                new TraceContext("run-multi-step", "dev", "dm-multi-step", "msg-multi-step", "conversation-multi-step", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> planningPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient, times(3)).decideNextAction(planningPromptCaptor.capture());
+        assertThat(planningPromptCaptor.getAllValues()).hasSize(3);
+        assertThat(planningPromptCaptor.getAllValues().get(0).content())
+                .contains("【编排状态】")
+                .contains("current_step: 1")
+                .contains("【当前请求观察历史】")
+                .contains("当前请求尚无结构化观察。");
+        assertThat(planningPromptCaptor.getAllValues().get(1).content())
+                .contains("current_step: 2")
+                .contains("remaining_steps:")
+                .contains("step: 1")
+                .contains("tool_name: first")
+                .contains("status: success")
+                .contains("step=one");
+        assertThat(planningPromptCaptor.getAllValues().get(2).content())
+                .contains("current_step: 3")
+                .contains("step: 1")
+                .contains("tool_name: first")
+                .contains("step: 2")
+                .contains("tool_name: second")
+                .contains("step=two");
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("terminal_reason: final_reply")
+                .contains("step: 1")
+                .contains("tool_name: first")
+                .contains("step: 2")
+                .contains("tool_name: second");
+        assertThat(finalPromptCaptor.getValue().content().indexOf("tool_name: first"))
+                .isLessThan(finalPromptCaptor.getValue().content().indexOf("tool_name: second"));
+        assertThat(replyEnvelope.body()).isEqualTo("这是整合两次工具观察后的最终回复。");
+    }
+
+    /**
+     * 一次工具失败只要未命中硬终止边界，系统就必须把结构化错误带入下一轮规划，而不是立即结束当前请求。
+     */
+    @Test
+    void shouldAllowReplanningAfterToolErrorWithinRemainingBudget() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any()))
+                .thenReturn(new ToolCallDecision("broken", Map.of()))
+                .thenReturn(new ToolCallDecision("fallback", Map.of()))
+                .thenReturn(new FinalReplyDecision("规划完成"));
+        when(modelClient.generateFinalReply(any())).thenReturn("已经在失败后完成了替代处理。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(
+                createBrokenTool("broken"),
+                createSuccessTool("fallback", Map.of("status", "ok"))
+        ));
+        DefaultAgentFacade facade = createFacade(workspaceLoader, turnRepository, modelClient, toolRegistry, new DefaultToolExecutor(toolRegistry));
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-replan-after-error"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-replan-after-error", "msg-replan-after-error", "先试第一个工具，失败后换一个"),
+                new TraceContext("run-replan-after-error", "dev", "dm-replan-after-error", "msg-replan-after-error", "conversation-replan-after-error", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> planningPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient, times(3)).decideNextAction(planningPromptCaptor.capture());
+        assertThat(planningPromptCaptor.getAllValues().get(1).content())
+                .contains("tool_name: broken")
+                .contains("status: error")
+                .contains("error_code: execution_failed");
+        assertThat(replyEnvelope.body()).isEqualTo("已经在失败后完成了替代处理。");
+    }
+
+    /**
+     * 当请求在返回最终回复前已经耗尽 step budget 时，系统必须停止继续规划，并基于累计观察生成一次最终回复。
+     */
+    @Test
+    void shouldStopLoopWhenStepBudgetIsExhaustedAndGenerateFinalReplyFromAccumulatedObservations() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any()))
+                .thenReturn(new ToolCallDecision("first", Map.of()))
+                .thenReturn(new ToolCallDecision("second", Map.of()))
+                .thenReturn(new ToolCallDecision("third", Map.of()));
+        when(modelClient.generateFinalReply(any())).thenReturn("预算已耗尽，我基于现有观察先给出结论。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(
+                createSuccessTool("first", Map.of("step", "one")),
+                createSuccessTool("second", Map.of("step", "two")),
+                createSuccessTool("third", Map.of("step", "three"))
+        ));
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF),
+                createProperties(Path.of("workspace"), 2)
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-budget-exhausted"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-budget-exhausted", "msg-budget-exhausted", "在两个 step 内尽量处理"),
+                new TraceContext("run-budget-exhausted", "dev", "dm-budget-exhausted", "msg-budget-exhausted", "conversation-budget-exhausted", RuntimeObservationMode.OFF)
+        ));
+
+        verify(modelClient, times(2)).decideNextAction(any());
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("terminal_reason: step_budget_exhausted")
+                .contains("step: 1")
+                .contains("tool_name: first")
+                .contains("step: 2")
+                .contains("tool_name: second")
+                .doesNotContain("tool_name: third");
+        assertThat(replyEnvelope.body()).isEqualTo("预算已耗尽，我基于现有观察先给出结论。");
+    }
+
+    /**
      * 当前消息命中显式确认且会话内存在待确认项时，系统必须短路恢复原始工具请求，而不是再让模型重规划一次。
      */
     @Test
@@ -276,7 +424,7 @@ class DefaultAgentFacadeTest {
                 modelClient,
                 toolRegistry,
                 toolExecutor,
-                createProperties(workspaceRoot),
+                createProperties(workspaceRoot, 1),
                 publisher,
                 confirmationService
         );
@@ -296,6 +444,147 @@ class DefaultAgentFacadeTest {
                 .contains("status: success");
         assertThat(executionCount.get()).isEqualTo(1);
         assertThat(replyEnvelope.body()).isEqualTo("已按确认执行文件写入。");
+    }
+
+    /**
+     * 显式确认恢复真实工具执行后，只要预算仍有剩余，系统就必须继续进入后续规划，而不是立刻结束当前请求。
+     */
+    @Test
+    void shouldResumePendingToolRequestAndContinuePlanningWhenBudgetRemains(@TempDir Path workspaceRoot) {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new FinalReplyDecision("规划阶段已完成"));
+        when(modelClient.generateFinalReply(any())).thenReturn("确认后的工具执行已经完成，并继续完成了本轮处理。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        AtomicInteger executionCount = new AtomicInteger();
+        Tool guardedTool = createGuardedFilesystemWriteTool(executionCount);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(guardedTool));
+        ToolConfirmationService confirmationService = createToolConfirmationService(workspaceRoot);
+        ToolExecutor toolExecutor = new DefaultToolExecutor(
+                toolRegistry,
+                new ToolPolicyGuard(
+                        confirmationService,
+                        new SqliteToolSafetyRepository(
+                                workspaceRoot.resolve(".openclaw/tool-safety.sqlite"),
+                                new ObjectMapper(),
+                                fixedClock()
+                        ),
+                        new FilesystemWriteArgumentValidator(List.of("AGENTS.md", "SOUL.md", "SKILLS.md"))
+                )
+        );
+        ToolCallRequest pendingRequest = new ToolCallRequest(
+                "mcp.filesystem.write_file",
+                Map.of(
+                        "path", "notes/confirmed-next.md",
+                        "content", "approved"
+                ),
+                new com.quashy.openclaw4j.tool.model.ToolExecutionContext(
+                        new InternalUserId("user-1"),
+                        new InternalConversationId("conversation-confirm-loop"),
+                        new NormalizedDirectMessage("dev", "user-1", "dm-confirm-loop", "msg-pending-loop", "请写文件"),
+                        new TraceContext("run-pending-loop", "dev", "dm-confirm-loop", "msg-pending-loop", "conversation-confirm-loop", RuntimeObservationMode.OFF),
+                        workspaceRoot
+                )
+        );
+        confirmationService.createPendingConfirmation(
+                pendingRequest,
+                new ToolSafetyProfile(
+                        ToolRiskLevel.DESTRUCTIVE,
+                        ToolConfirmationPolicy.EXPLICIT,
+                        ToolArgumentValidatorType.FILESYSTEM_WRITE
+                ),
+                "tool_confirmation_required"
+        );
+        DefaultAgentFacade facade = new DefaultAgentFacade(
+                workspaceLoader,
+                new AgentPromptAssembler(),
+                new SkillResolver(new SkillMarkdownParser()),
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                toolExecutor,
+                createProperties(workspaceRoot),
+                new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF),
+                confirmationService
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-confirm-loop"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-confirm-loop", "msg-confirm-loop", "确认"),
+                new TraceContext("run-confirm-loop", "dev", "dm-confirm-loop", "msg-confirm-loop", "conversation-confirm-loop", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> planningPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).decideNextAction(planningPromptCaptor.capture());
+        assertThat(planningPromptCaptor.getValue().content())
+                .contains("tool_name: mcp.filesystem.write_file")
+                .contains("status: success");
+        verify(modelClient).generateFinalReply(any());
+        assertThat(executionCount.get()).isEqualTo(1);
+        assertThat(replyEnvelope.body()).isEqualTo("确认后的工具执行已经完成，并继续完成了本轮处理。");
+    }
+
+    /**
+     * 多步运行的观测事件必须带上 step 维度字段和终止原因，便于后续排障与预算治理。
+     */
+    @Test
+    void shouldEmitStepScopedObservationPayloadsAndTerminalReasonForMultiStepRun() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any()))
+                .thenReturn(new ToolCallDecision("first", Map.of()))
+                .thenReturn(new ToolCallDecision("second", Map.of()))
+                .thenReturn(new FinalReplyDecision("规划阶段已结束"));
+        when(modelClient.generateFinalReply(any())).thenReturn("多步运行最终回复。");
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.TIMELINE);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(
+                createSuccessTool("first", Map.of("step", "one")),
+                createSuccessTool("second", Map.of("step", "two"))
+        ));
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher
+        );
+
+        facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-multi-step-events"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-multi-step-events", "msg-multi-step-events", "连续执行两个工具"),
+                new TraceContext("run-multi-step-events", "dev", "dm-multi-step-events", "msg-multi-step-events", "conversation-multi-step-events", RuntimeObservationMode.TIMELINE)
+        ));
+
+        assertThat(publisher.events)
+                .extracting(RuntimeObservationEvent::eventType)
+                .containsSubsequence(
+                        "agent.model.decision.started",
+                        "agent.model.decision.completed",
+                        "agent.tool.execution.started",
+                        "agent.tool.execution.completed",
+                        "agent.model.decision.started",
+                        "agent.model.decision.completed",
+                        "agent.tool.execution.started",
+                        "agent.tool.execution.completed",
+                        "agent.orchestration.terminated",
+                        "agent.model.final_reply.completed"
+                );
+        assertThat(publisher.events.stream()
+                .filter(event -> event.eventType().equals("agent.model.decision.completed"))
+                .map(event -> event.payload().get("stepIndex")))
+                .containsExactly(1, 2, 3);
+        RuntimeObservationEvent terminationEvent = publisher.events.stream()
+                .filter(event -> event.eventType().equals("agent.orchestration.terminated"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(terminationEvent.payload())
+                .containsEntry("terminalReason", "final_reply")
+                .containsEntry("stepIndex", 3);
     }
 
     /**
@@ -851,6 +1140,48 @@ class DefaultAgentFacadeTest {
     }
 
     /**
+     * 构造一个始终成功的最小工具，用于验证多步编排只关注观察历史与循环控制，不引入额外工具行为噪音。
+     */
+    private Tool createSuccessTool(String toolName, Map<String, Object> payload) {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        toolName,
+                        "用于测试多步编排成功路径的工具。",
+                        ToolInputSchema.object(Map.of(), List.of())
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                return payload;
+            }
+        };
+    }
+
+    /**
+     * 构造一个始终抛出异常的最小工具，用于验证错误观察能否进入下一轮规划而不是直接终止。
+     */
+    private Tool createBrokenTool(String toolName) {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        toolName,
+                        "用于测试多步编排失败路径的工具。",
+                        ToolInputSchema.object(Map.of(), List.of())
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                throw new IllegalStateException("boom");
+            }
+        };
+    }
+
+    /**
      * 合并本地工具与 MCP 工具列表，避免集成测试为了目录组合逻辑重复手写样板代码。
      */
     private List<Tool> combineTools(List<Tool> localTools, List<Tool> mcpTools) {
@@ -863,6 +1194,13 @@ class DefaultAgentFacadeTest {
      * 为测试构造包含 memory 索引配置的集中配置对象，避免每个用例重复手写默认值。
      */
     private OpenClawProperties createProperties(Path workspaceRoot) {
+        return createProperties(workspaceRoot, 4);
+    }
+
+    /**
+     * 允许测试显式指定编排 step budget，从而覆盖“继续规划”和“预算耗尽即终止”两类循环边界。
+     */
+    private OpenClawProperties createProperties(Path workspaceRoot, int maxSteps) {
         return new OpenClawProperties(
                 workspaceRoot.toString(),
                 4,
@@ -871,6 +1209,7 @@ class DefaultAgentFacadeTest {
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
                 new OpenClawProperties.McpProperties(Duration.ofSeconds(20), Map.of()),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
+                new OpenClawProperties.OrchestrationProperties(maxSteps),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
                 new OpenClawProperties.MemoryProperties(".openclaw/memory-index.sqlite"),

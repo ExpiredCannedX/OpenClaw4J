@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 统一收敛单聊核心链路当前阶段需要的可配置项，避免 workspace、上下文轮次、调试入口文案和 Telegram 参数散落在实现细节中。
+ * 统一收敛单聊核心链路当前阶段需要的可配置项，避免 workspace、编排预算、上下文轮次、调试入口文案和 Telegram 参数散落在实现细节中。
  */
 @ConfigurationProperties(prefix = "openclaw")
 public record OpenClawProperties(
@@ -43,6 +43,10 @@ public record OpenClawProperties(
          */
         ObservabilityProperties observability,
         /**
+         * 收敛单次请求有界编排循环的预算配置，确保多步工具闭环始终受稳定上限约束。
+         */
+        OrchestrationProperties orchestration,
+        /**
          * 收敛 reminder V1 的本地 SQLite 文件路径，避免异步任务事实源散落在具体仓储实现中。
          */
         ReminderProperties reminder,
@@ -71,6 +75,7 @@ public record OpenClawProperties(
         telegram = telegram != null ? telegram : new TelegramProperties(false, null, null, null, null);
         mcp = mcp != null ? mcp : new McpProperties(null, null);
         observability = observability != null ? observability : new ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160);
+        orchestration = orchestration != null ? orchestration : new OrchestrationProperties(4);
         reminder = reminder != null ? reminder : new ReminderProperties(null);
         scheduler = scheduler != null ? scheduler : new SchedulerProperties(null, 0, 0, null);
         memory = memory != null ? memory : new MemoryProperties(null);
@@ -233,6 +238,24 @@ public record OpenClawProperties(
         public ObservabilityProperties {
             mode = mode != null ? mode : RuntimeObservationMode.TIMELINE;
             verbosePreviewLength = verbosePreviewLength > 0 ? verbosePreviewLength : 160;
+        }
+    }
+
+    /**
+     * 描述单次请求内多步工具编排的最大预算，使 Agent Core 可以在统一配置下控制同步闭环的成本上限。
+     */
+    public record OrchestrationProperties(
+            /**
+             * 控制单次请求最多允许沉淀多少个工具观察，超过后必须停止新增工具步骤并收敛为最终回复。
+             */
+            int maxSteps
+    ) {
+
+        /**
+         * 为多步编排预算提供稳定默认值，保证未显式配置时仍能限制请求级同步循环的最坏成本。
+         */
+        public OrchestrationProperties {
+            maxSteps = maxSteps > 0 ? maxSteps : 4;
         }
     }
 

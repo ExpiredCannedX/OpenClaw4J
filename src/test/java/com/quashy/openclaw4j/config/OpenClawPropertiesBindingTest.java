@@ -11,12 +11,12 @@ import org.springframework.context.annotation.Configuration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 验证 `application.yaml` 中声明的调试入口、Telegram、MCP、运行期观测、工具安全治理以及 reminder/scheduler 配置能够完整绑定到集中配置对象。
+ * 验证 `application.yaml` 中声明的调试入口、Telegram、MCP、运行期观测、工具安全治理、编排预算以及 reminder/scheduler 配置能够完整绑定到集中配置对象。
  */
 class OpenClawPropertiesBindingTest {
 
     /**
-     * 使用与应用启动一致的 Spring Boot 配置绑定路径，确保运行时真的能从配置源读取调试入口、Telegram、MCP、观测、工具安全治理以及 reminder/scheduler 参数。
+     * 使用与应用启动一致的 Spring Boot 配置绑定路径，确保运行时真的能从配置源读取调试入口、Telegram、MCP、观测、工具安全治理、编排预算以及 reminder/scheduler 参数。
      */
     @Test
     void shouldBindDebugTelegramMcpObservabilityToolSafetyMemoryAndReminderPropertiesFromConfiguration() {
@@ -43,6 +43,7 @@ class OpenClawPropertiesBindingTest {
                         "openclaw.observability.mode=VERBOSE",
                         "openclaw.observability.console-enabled=false",
                         "openclaw.observability.verbose-preview-length=64",
+                        "openclaw.orchestration.max-steps=7",
                         "openclaw.tool-safety.database-file=.openclaw/tool-safety.sqlite",
                         "openclaw.tool-safety.confirmation-ttl=PT12M",
                         "openclaw.tool-safety.confirmation-phrases[0]=确认",
@@ -76,6 +77,8 @@ class OpenClawPropertiesBindingTest {
                     assertThat(properties.observability().mode()).isEqualTo(RuntimeObservationMode.VERBOSE);
                     assertThat(properties.observability().consoleEnabled()).isFalse();
                     assertThat(properties.observability().verbosePreviewLength()).isEqualTo(64);
+                    Object orchestrationProperties = invokeNoArg(properties, "orchestration");
+                    assertThat(invokeNoArg(orchestrationProperties, "maxSteps")).isEqualTo(7);
                     assertThat(properties.toolSafety().databaseFile()).isEqualTo(".openclaw/tool-safety.sqlite");
                     assertThat(properties.toolSafety().confirmationTtl()).hasToString("PT12M");
                     assertThat(properties.toolSafety().confirmationPhrases()).containsExactly("确认", "继续");

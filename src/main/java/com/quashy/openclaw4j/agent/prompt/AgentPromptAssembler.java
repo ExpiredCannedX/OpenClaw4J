@@ -1,5 +1,8 @@
 package com.quashy.openclaw4j.agent.prompt;
 
+import com.quashy.openclaw4j.agent.runtime.AgentObservation;
+import com.quashy.openclaw4j.agent.runtime.AgentOrchestrationState;
+import com.quashy.openclaw4j.agent.runtime.AgentOrchestrationTerminalReason;
 import com.quashy.openclaw4j.domain.ConversationTurn;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
@@ -30,8 +33,31 @@ public class AgentPromptAssembler {
             NormalizedDirectMessage message,
             List<ToolDefinition> availableTools
     ) {
+        return assemblePlanningPrompt(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                message,
+                availableTools,
+                new AgentOrchestrationState(1)
+        );
+    }
+
+    /**
+     * 组装带有多步编排状态的规划阶段 prompt，使模型能看到剩余 budget 与按序观察历史后再决定下一步动作。
+     */
+    public AgentPrompt assemblePlanningPrompt(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            NormalizedDirectMessage message,
+            List<ToolDefinition> availableTools,
+            AgentOrchestrationState orchestrationState
+    ) {
         StringBuilder builder = new StringBuilder();
         appendBaseContext(builder, workspaceSnapshot, selectedSkill, recentTurns, message);
+        appendOrchestrationStateSection(builder, orchestrationState);
+        appendObservationHistorySection(builder, "【当前请求观察历史】", orchestrationState.observationHistory(), "当前请求尚无结构化观察。");
         appendToolCatalogSection(builder, availableTools);
         appendPlanningInstruction(builder);
         return new AgentPrompt(builder.toString());
@@ -47,9 +73,31 @@ public class AgentPromptAssembler {
             NormalizedDirectMessage message,
             ToolExecutionResult toolObservation
     ) {
+        return assembleFinalReplyPrompt(
+                workspaceSnapshot,
+                selectedSkill,
+                recentTurns,
+                message,
+                new AgentOrchestrationState(1)
+                        .appendObservation(toolObservation)
+                        .withTerminalReason(AgentOrchestrationTerminalReason.FINAL_REPLY)
+        );
+    }
+
+    /**
+     * 组装带有完整观察历史和终止信息的最终回复 prompt，使模型能基于累计观察而不是最后一步单点结果来收敛回答。
+     */
+    public AgentPrompt assembleFinalReplyPrompt(
+            WorkspaceSnapshot workspaceSnapshot,
+            Optional<ResolvedSkill> selectedSkill,
+            List<ConversationTurn> recentTurns,
+            NormalizedDirectMessage message,
+            AgentOrchestrationState orchestrationState
+    ) {
         StringBuilder builder = new StringBuilder();
         appendBaseContext(builder, workspaceSnapshot, selectedSkill, recentTurns, message);
-        appendToolObservationSection(builder, toolObservation);
+        appendOrchestrationStateSection(builder, orchestrationState);
+        appendObservationHistorySection(builder, "【工具观察结果】", orchestrationState.observationHistory(), "当前请求尚无结构化观察。");
         appendFinalReplyInstruction(builder);
         return new AgentPrompt(builder.toString());
     }
@@ -130,22 +178,56 @@ public class AgentPromptAssembler {
     }
 
     /**
-     * 以稳定结构回填一次工具观察结果，让最终回复阶段可以安全理解工具成功或失败信息。
+     * 把当前请求的编排 budget、当前位置和终止原因暴露给模型，避免其在多步闭环里丢失剩余执行空间感知。
      */
-    private void appendToolObservationSection(StringBuilder builder, ToolExecutionResult toolObservation) {
-        builder.append("【工具观察结果】\n");
-        if (toolObservation instanceof ToolExecutionSuccess success) {
-            builder.append("tool_name: ").append(success.toolName()).append("\n");
-            builder.append("status: success\n");
-            builder.append("payload: ").append(success.payload()).append("\n\n");
+    private void appendOrchestrationStateSection(StringBuilder builder, AgentOrchestrationState orchestrationState) {
+        builder.append("【编排状态】\n");
+        builder.append("current_step: ").append(orchestrationState.currentStepIndex()).append("\n");
+        builder.append("max_steps: ").append(orchestrationState.maxSteps()).append("\n");
+        builder.append("remaining_steps: ").append(orchestrationState.remainingSteps()).append("\n");
+        if (orchestrationState.terminalReason() != null) {
+            builder.append("terminal_reason: ").append(orchestrationState.terminalReason().wireValue()).append("\n");
+        }
+        builder.append("\n");
+    }
+
+    /**
+     * 以稳定顺序渲染当前请求的结构化观察历史，确保后续 planning/final-reply 都能看到完整上下文而非最后一步截面。
+     */
+    private void appendObservationHistorySection(
+            StringBuilder builder,
+            String sectionTitle,
+            List<AgentObservation> observationHistory,
+            String emptyMessage
+    ) {
+        builder.append(sectionTitle).append("\n");
+        if (observationHistory.isEmpty()) {
+            builder.append(emptyMessage).append("\n\n");
             return;
         }
-        ToolExecutionError error = (ToolExecutionError) toolObservation;
+        for (AgentObservation observation : observationHistory) {
+            builder.append("step: ").append(observation.stepIndex()).append("\n");
+            appendObservation(builder, observation.result());
+            builder.append("\n");
+        }
+    }
+
+    /**
+     * 以稳定结构渲染单个工具观察结果，使 prompt 在 success/error 两类路径下都保持统一可读格式。
+     */
+    private void appendObservation(StringBuilder builder, ToolExecutionResult observation) {
+        if (observation instanceof ToolExecutionSuccess success) {
+            builder.append("tool_name: ").append(success.toolName()).append("\n");
+            builder.append("status: success\n");
+            builder.append("payload: ").append(success.payload()).append("\n");
+            return;
+        }
+        ToolExecutionError error = (ToolExecutionError) observation;
         builder.append("tool_name: ").append(error.toolName()).append("\n");
         builder.append("status: error\n");
         builder.append("error_code: ").append(error.errorCode()).append("\n");
         builder.append("message: ").append(error.message()).append("\n");
-        builder.append("details: ").append(error.details()).append("\n\n");
+        builder.append("details: ").append(error.details()).append("\n");
     }
 
     /**
@@ -156,7 +238,7 @@ public class AgentPromptAssembler {
         builder.append("请只输出一个 JSON 对象，不要输出 Markdown 代码块或额外解释。\n");
         builder.append("若已足够直接回答用户，请输出：{\"type\":\"final_reply\",\"reply\":\"...\"}\n");
         builder.append("若需要调用一个工具，请输出：{\"type\":\"tool_call\",\"toolName\":\"工具名\",\"arguments\":{}}\n");
-        builder.append("本次请求至多允许一次工具调用。\n");
+        builder.append("本次请求允许在剩余 step budget 内继续同步工具闭环，但每一步仍只能输出一个下一步动作。\n");
     }
 
     /**
