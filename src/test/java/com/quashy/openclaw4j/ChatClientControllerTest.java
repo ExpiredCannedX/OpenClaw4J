@@ -33,6 +33,7 @@ class ChatClientControllerTest {
                 "fallback",
                 new OpenClawProperties.DebugProperties("来自配置的默认问题"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.McpProperties(Duration.ofSeconds(20), java.util.Map.of()),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),

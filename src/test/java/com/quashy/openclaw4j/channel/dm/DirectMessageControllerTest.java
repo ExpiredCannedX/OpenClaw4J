@@ -67,6 +67,7 @@ class DirectMessageControllerTest {
                 "fallback",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.McpProperties(Duration.ofSeconds(20), java.util.Map.of()),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),

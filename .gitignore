@@ -62,3 +62,5 @@ nbdist/
 Thumbs.db
 /.codex/
 AGENTS.md
+/.npm-cache/
+/.openclaw/

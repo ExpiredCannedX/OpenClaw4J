@@ -5,6 +5,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 统一收敛单聊核心链路当前阶段需要的可配置项，避免 workspace、上下文轮次、调试入口文案和 Telegram 参数散落在实现细节中。
@@ -32,6 +35,10 @@ public record OpenClawProperties(
          */
         TelegramProperties telegram,
         /**
+         * 收敛 MCP server 的声明式配置，确保启动策略、命令行参数与超时预算由集中配置统一驱动。
+         */
+        McpProperties mcp,
+        /**
          * 收敛运行期可观测性模式与 sink 相关配置，确保默认行为能在应用级统一声明。
          */
         ObservabilityProperties observability,
@@ -58,6 +65,7 @@ public record OpenClawProperties(
         fallbackReply = StringUtils.hasText(fallbackReply) ? fallbackReply : "系统暂时繁忙，请稍后再试。";
         debug = debug != null ? debug : new DebugProperties(null);
         telegram = telegram != null ? telegram : new TelegramProperties(false, null, null, null, null);
+        mcp = mcp != null ? mcp : new McpProperties(null, null);
         observability = observability != null ? observability : new ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160);
         reminder = reminder != null ? reminder : new ReminderProperties(null);
         scheduler = scheduler != null ? scheduler : new SchedulerProperties(null, 0, 0, null);
@@ -116,6 +124,83 @@ public record OpenClawProperties(
             webhookSecret = StringUtils.hasText(webhookSecret) ? webhookSecret : "";
             webhookPath = StringUtils.hasText(webhookPath) ? webhookPath : "/api/telegram/webhook";
             webhookUrl = StringUtils.hasText(webhookUrl) ? webhookUrl : "";
+        }
+    }
+
+    /**
+     * 描述 MCP client 需要的集中配置，使 server 生命周期管理、discovery 与调用超时都能由应用配置统一声明。
+     */
+    public record McpProperties(
+            /**
+             * 控制单次 MCP 请求的默认超时预算，避免 discovery 或 invocation 无限阻塞主链路。
+             */
+            Duration requestTimeout,
+            /**
+             * 以 server alias 为键收敛所有 `stdio` MCP server 配置，保证命名与启动策略天然绑定。
+             */
+            Map<String, McpServerProperties> servers
+    ) {
+
+        /**
+         * 为 MCP client 提供稳定默认值，保证未配置 server 时主链路仍保持“仅本地工具”的现有行为。
+         */
+        public McpProperties {
+            requestTimeout = requestTimeout != null && !requestTimeout.isNegative() && !requestTimeout.isZero()
+                    ? requestTimeout
+                    : Duration.ofSeconds(20);
+            servers = immutableServerMap(servers);
+        }
+
+        /**
+         * 递归冻结 server 配置映射，同时保留声明顺序，便于后续按配置顺序启动与观测。
+         */
+        private static Map<String, McpServerProperties> immutableServerMap(Map<String, McpServerProperties> servers) {
+            if (servers == null || servers.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, McpServerProperties> copiedServers = new LinkedHashMap<>();
+            servers.forEach((alias, serverProperties) -> copiedServers.put(
+                    alias,
+                    serverProperties != null ? serverProperties : new McpServerProperties(null, null, null, null, false)
+            ));
+            return java.util.Collections.unmodifiableMap(copiedServers);
+        }
+    }
+
+    /**
+     * 描述单个 `stdio` MCP server 的启动契约，使 alias、命令、环境与降级策略拥有清晰边界。
+     */
+    public record McpServerProperties(
+            /**
+             * 控制启动该 MCP server 的命令；在 Windows 上通常为 `cmd.exe`，由 args 再传入真实批处理命令。
+             */
+            String command,
+            /**
+             * 承载 `stdio` server 启动参数，顺序必须保持稳定，避免命令行语义被破坏。
+             */
+            List<String> args,
+            /**
+             * 承载该 server 进程专属环境变量，避免敏感配置散落在实现类或全局环境中。
+             */
+            Map<String, String> env,
+            /**
+             * 控制 server 进程的工作目录，便于 filesystem 等本地型 MCP server 绑定指定 workspace。
+             */
+            String workingDirectory,
+            /**
+             * 标记该 server 是否属于强依赖；强依赖初始化失败时主应用必须 fail-fast。
+             */
+            boolean required
+    ) {
+
+        /**
+         * 对单个 server 配置做最小兜底，避免后续生命周期管理层充满空集合和空字符串判断。
+         */
+        public McpServerProperties {
+            command = StringUtils.hasText(command) ? command : "";
+            args = args != null ? List.copyOf(args) : List.of();
+            env = env != null ? Map.copyOf(env) : Map.of();
+            workingDirectory = StringUtils.hasText(workingDirectory) ? workingDirectory : "";
         }
     }
 

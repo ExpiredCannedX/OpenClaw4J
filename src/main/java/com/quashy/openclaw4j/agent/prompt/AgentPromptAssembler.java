@@ -3,17 +3,15 @@ package com.quashy.openclaw4j.agent.prompt;
 import com.quashy.openclaw4j.domain.ConversationTurn;
 import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
-import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.model.ToolExecutionError;
 import com.quashy.openclaw4j.tool.model.ToolExecutionResult;
 import com.quashy.openclaw4j.tool.model.ToolExecutionSuccess;
-import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
+import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.workspace.WorkspaceFileContent;
 import com.quashy.openclaw4j.workspace.WorkspaceSnapshot;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -117,26 +115,17 @@ public class AgentPromptAssembler {
             builder.append("name: ").append(toolDefinition.name()).append("\n");
             builder.append("description: ").append(toolDefinition.description()).append("\n");
             builder.append("input_schema:\n");
-            builder.append("  type: ").append(toolDefinition.inputSchema().type()).append("\n");
-            builder.append("  requires: ").append(toolDefinition.inputSchema().required()).append("\n");
-            appendToolProperties(builder, toolDefinition.inputSchema().properties());
+            appendIndentedBlock(builder, toolDefinition.inputSchema().toPrettyJson(), "  ");
             builder.append("\n");
         }
     }
 
     /**
-     * 追加工具入参属性说明，帮助模型理解参数名、类型和业务含义。
+     * 把多行文本按统一缩进写入 prompt，保证工具 schema 在目录段落中仍保持可读层次。
      */
-    private void appendToolProperties(StringBuilder builder, Map<String, ToolInputProperty> properties) {
-        if (properties.isEmpty()) {
-            builder.append("  properties: {}\n");
-            return;
-        }
-        builder.append("  properties:\n");
-        for (Map.Entry<String, ToolInputProperty> entry : properties.entrySet()) {
-            builder.append("    - name: ").append(entry.getKey()).append("\n");
-            builder.append("      type: ").append(entry.getValue().type()).append("\n");
-            builder.append("      description: ").append(entry.getValue().description()).append("\n");
+    private void appendIndentedBlock(StringBuilder builder, String block, String indentation) {
+        for (String line : block.split("\\R")) {
+            builder.append(indentation).append(line).append("\n");
         }
     }
 

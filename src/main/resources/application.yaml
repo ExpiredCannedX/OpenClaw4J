@@ -26,6 +26,25 @@ openclaw:
     webhook-secret: ${telegram.webhook-secret:${TELEGRAM_WEBHOOK_SECRET:}}
     webhook-path: ${telegram.webhook-path:${TELEGRAM_WEBHOOK_PATH:/api/telegram/webhook}}
     webhook-url: ${telegram.webhook-url:${TELEGRAM_WEBHOOK_URL:}}
+  mcp:
+    request-timeout: ${OPENCLAW_MCP_REQUEST_TIMEOUT:PT20S}
+    servers:
+      filesystem:
+        command: ${OPENCLAW_MCP_FILESYSTEM_COMMAND:}
+        args:
+          - -y
+          - "@modelcontextprotocol/server-filesystem"
+          - ${OPENCLAW_MCP_FILESYSTEM_ROOT:${OPENCLAW_WORKSPACE_ROOT:./workspace}}
+        env:
+          npm_config_cache: ${OPENCLAW_MCP_FILESYSTEM_NPM_CACHE:.openclaw/npm-cache}
+        required: ${OPENCLAW_MCP_FILESYSTEM_REQUIRED:false}
+      fetch:
+        command: ${OPENCLAW_MCP_FETCH_COMMAND:}
+        args:
+          - mcp-server-fetch
+        env:
+          PYTHONIOENCODING: ${OPENCLAW_MCP_FETCH_PYTHONIOENCODING:utf-8}
+        required: ${OPENCLAW_MCP_FETCH_REQUIRED:false}
   observability:
     # - `ERRORS` / `TIMELINE` 只输出摘要字段，如工具名、Skill 名、事件耗时、输入长度、结果状态。
     #- `VERBOSE` 才允许输出截断后的预览字段，且需限制长度，避免完整 prompt、workspace 文本和原始模型输出直接打到控制台。

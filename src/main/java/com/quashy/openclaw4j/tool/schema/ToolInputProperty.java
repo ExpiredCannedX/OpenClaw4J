@@ -2,6 +2,8 @@ package com.quashy.openclaw4j.tool.schema;
 
 import org.springframework.util.Assert;
 
+import java.util.Map;
+
 /**
  * 表示单个工具参数的最小 schema 信息，使模型能理解参数类型与业务语义。
  */
@@ -22,5 +24,15 @@ public record ToolInputProperty(
     public ToolInputProperty {
         Assert.hasText(type, "property type must not be blank");
         Assert.hasText(description, "property description must not be blank");
+    }
+
+    /**
+     * 把本地简洁属性定义转换成 JSON Schema 片段，确保本地工具和 MCP 工具共用统一 schema 表达。
+     */
+    public Map<String, Object> toSchemaFragment() {
+        return Map.of(
+                "type", type,
+                "description", description
+        );
     }
 }

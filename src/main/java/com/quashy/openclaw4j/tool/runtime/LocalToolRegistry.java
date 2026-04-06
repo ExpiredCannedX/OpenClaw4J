@@ -3,7 +3,6 @@ package com.quashy.openclaw4j.tool.runtime;
 import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
-import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
 import java.util.ArrayList;
@@ -15,7 +14,6 @@ import java.util.Optional;
 /**
  * 维护当前进程内注册的工具目录，并在启动期阻止重复工具名进入主链路。
  */
-@Component
 public class LocalToolRegistry implements ToolRegistry {
 
     /**

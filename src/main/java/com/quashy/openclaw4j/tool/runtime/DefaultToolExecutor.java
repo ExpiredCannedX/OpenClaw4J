@@ -54,6 +54,13 @@ public class DefaultToolExecutor implements ToolExecutor {
                     exception.getMessage(),
                     exception.details()
             );
+        } catch (ToolExecutionException exception) {
+            return new ToolExecutionError(
+                    tool.definition().name(),
+                    exception.errorCode(),
+                    exception.getMessage(),
+                    exception.details()
+            );
         } catch (Exception exception) {
             return new ToolExecutionError(
                     tool.definition().name(),

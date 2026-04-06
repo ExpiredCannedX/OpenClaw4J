@@ -78,6 +78,24 @@ class DefaultToolExecutorTest {
     }
 
     /**
+     * 当工具显式抛出结构化执行错误时，执行器必须保留该错误码与细节，而不是再次折叠成泛化的 execution_failed。
+     */
+    @Test
+    void shouldPreserveStructuredExecutionErrorWhenToolThrowsToolExecutionException() {
+        Tool timeoutTool = createTimeoutTool();
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(timeoutTool));
+        ToolExecutionResult result = new DefaultToolExecutor(toolRegistry).execute(new ToolCallRequest("mcp.filesystem.read_file", Map.of("path", "/tmp/a.txt")));
+
+        assertThat(result)
+                .isInstanceOfSatisfying(ToolExecutionError.class, error -> {
+                    assertThat(error.toolName()).isEqualTo("mcp.filesystem.read_file");
+                    assertThat(error.errorCode()).isEqualTo("timeout");
+                    assertThat(error.message()).contains("timed out");
+                    assertThat(error.details()).containsEntry("serverAlias", "filesystem");
+                });
+    }
+
+    /**
      * 执行器在转发调用时必须保留运行时上下文，避免后续 memory 等工具拿不到用户、会话和渠道来源。
      */
     @Test
@@ -150,6 +168,34 @@ class DefaultToolExecutorTest {
             @Override
             public Map<String, Object> execute(ToolCallRequest request) {
                 throw new IllegalStateException("boom");
+            }
+        };
+    }
+
+    /**
+     * 构造一个模拟 MCP 超时的工具，用于验证执行器会保留结构化错误码而不是重新泛化。
+     */
+    private Tool createTimeoutTool() {
+        return new Tool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition(
+                        "mcp.filesystem.read_file",
+                        "用于验证 MCP 超时错误收敛。",
+                        ToolInputSchema.object(
+                                Map.of("path", new ToolInputProperty("string", "需要读取的文件路径。")),
+                                List.of("path")
+                        )
+                );
+            }
+
+            @Override
+            public Map<String, Object> execute(ToolCallRequest request) {
+                throw new ToolExecutionException(
+                        "timeout",
+                        "MCP tool timed out.",
+                        Map.of("serverAlias", "filesystem")
+                );
             }
         };
     }

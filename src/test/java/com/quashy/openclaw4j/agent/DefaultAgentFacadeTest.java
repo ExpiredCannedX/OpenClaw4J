@@ -34,6 +34,11 @@ import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.api.ToolExecutor;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
+import com.quashy.openclaw4j.tool.model.ToolExecutionException;
+import com.quashy.openclaw4j.tool.mcp.McpBackedTool;
+import com.quashy.openclaw4j.tool.mcp.McpClientSession;
+import com.quashy.openclaw4j.tool.mcp.McpDiscoveredTool;
+import com.quashy.openclaw4j.tool.mcp.McpToolCatalog;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputProperty;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
@@ -152,7 +157,7 @@ class DefaultAgentFacadeTest {
                 .contains("上一轮助手消息")
                 .contains("【可用工具目录】")
                 .contains("name: time")
-                .contains("requires: []")
+                .contains("\"required\" : [ ]")
                 .contains("请使用 $code-review 处理这一轮问题");
         assertThat(replyEnvelope.body()).isEqualTo("最终回复");
         assertThat(replyEnvelope.signals())
@@ -201,6 +206,53 @@ class DefaultAgentFacadeTest {
         assertThat(turnRepository.loadRecentTurns(new InternalConversationId("conversation-2"), 10))
                 .extracting(ConversationTurn::content)
                 .containsExactly("现在几点了？", "现在是北京时间 2026-04-03 16:09:10。");
+    }
+
+    /**
+     * 模型请求 MCP 工具时，系统必须沿用既有“一次工具调用 -> 结构化观察 -> 最终回复”闭环，而不是分叉出独立主链路。
+     */
+    @Test
+    void shouldExecuteMcpToolAndIncludeStructuredObservationBeforeFinalReply() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision(
+                "mcp.filesystem.read_file",
+                Map.of("path", "README.md")
+        ));
+        when(modelClient.generateFinalReply(any())).thenReturn("我已经读取了 README。");
+        InMemoryConversationTurnRepository turnRepository = new InMemoryConversationTurnRepository();
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(createMcpBackedReadFileTool(
+                new StubMcpClientSession(Map.of(
+                        "content", List.of(Map.of("type", "text", "text", "README 内容")),
+                        "isError", false
+                )),
+                publisher
+        )));
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                turnRepository,
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-mcp-success"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-mcp-success", "msg-mcp-success", "帮我读一下 README"),
+                new TraceContext("run-mcp-success", "dev", "dm-mcp-success", "msg-mcp-success", "conversation-mcp-success", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: mcp.filesystem.read_file")
+                .contains("status: success")
+                .contains("README 内容");
+        assertThat(replyEnvelope.body()).isEqualTo("我已经读取了 README。");
     }
 
     /**
@@ -279,6 +331,107 @@ class DefaultAgentFacadeTest {
                 .contains("status: error")
                 .contains("error_code: execution_failed");
         assertThat(replyEnvelope.body()).isEqualTo("工具执行失败了，我先给你一个安全回复。");
+    }
+
+    /**
+     * optional MCP server 缺席时，规划阶段仍必须继续暴露剩余本地工具并完成最终回复，而不是因为增强能力缺席中断主链路。
+     */
+    @Test
+    void shouldContinuePlanningWhenOptionalMcpServerIsAbsent() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new FinalReplyDecision("仍可继续处理。"));
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        McpToolCatalog mcpToolCatalog = new McpToolCatalog(
+                new OpenClawProperties.McpProperties(
+                        Duration.ofSeconds(8),
+                        Map.of("filesystem", new OpenClawProperties.McpServerProperties(
+                                "cmd.exe",
+                                List.of("/c", "npx"),
+                                Map.of(),
+                                "./workspace",
+                                false
+                        ))
+                ),
+                alias -> {
+                    throw new IllegalStateException("optional server missing");
+                },
+                publisher
+        );
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(TimeTool.forClock(fixedClock())));
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                new LocalToolRegistry(combineTools(List.of(TimeTool.forClock(fixedClock())), mcpToolCatalog.tools())),
+                new DefaultToolExecutor(new LocalToolRegistry(combineTools(List.of(TimeTool.forClock(fixedClock())), mcpToolCatalog.tools()))),
+                publisher
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-mcp-optional"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-mcp-optional", "msg-mcp-optional", "继续分析，不依赖外部工具"),
+                new TraceContext("run-mcp-optional", "dev", "dm-mcp-optional", "msg-mcp-optional", "conversation-mcp-optional", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> promptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).decideNextAction(promptCaptor.capture());
+        assertThat(promptCaptor.getValue().content())
+                .contains("name: time")
+                .doesNotContain("mcp.filesystem.read_file");
+        assertThat(replyEnvelope.body()).isEqualTo("仍可继续处理。");
+        assertThat(toolRegistry.listDefinitions())
+                .extracting(ToolDefinition::name)
+                .containsExactly("time");
+    }
+
+    /**
+     * MCP 工具调用失败时，系统必须把 transport 失败转换成结构化观察，再继续走最终回复阶段而不是把异常抛给渠道层。
+     */
+    @Test
+    void shouldConvertMcpToolFailureIntoStructuredObservation() {
+        WorkspaceLoader workspaceLoader = mock(WorkspaceLoader.class);
+        when(workspaceLoader.load()).thenReturn(createWorkspaceSnapshotWithoutSkill());
+        AgentModelClient modelClient = mock(AgentModelClient.class);
+        when(modelClient.decideNextAction(any())).thenReturn(new ToolCallDecision(
+                "mcp.filesystem.read_file",
+                Map.of("path", "README.md")
+        ));
+        when(modelClient.generateFinalReply(any())).thenReturn("MCP 工具失败了，我先继续给你安全回复。");
+        RecordingRuntimeObservationPublisher publisher = new RecordingRuntimeObservationPublisher(RuntimeObservationMode.OFF);
+        ToolRegistry toolRegistry = new LocalToolRegistry(List.of(createMcpBackedReadFileTool(
+                new StubFailingMcpClientSession(new ToolExecutionException(
+                        "transport_failure",
+                        "filesystem disconnected",
+                        Map.of("serverAlias", "filesystem")
+                )),
+                publisher
+        )));
+        DefaultAgentFacade facade = createFacade(
+                workspaceLoader,
+                new InMemoryConversationTurnRepository(),
+                modelClient,
+                toolRegistry,
+                new DefaultToolExecutor(toolRegistry),
+                publisher
+        );
+
+        ReplyEnvelope replyEnvelope = facade.reply(new AgentRequest(
+                new InternalUserId("user-1"),
+                new InternalConversationId("conversation-mcp-failure"),
+                new NormalizedDirectMessage("dev", "user-1", "dm-mcp-failure", "msg-mcp-failure", "读文件失败也继续"),
+                new TraceContext("run-mcp-failure", "dev", "dm-mcp-failure", "msg-mcp-failure", "conversation-mcp-failure", RuntimeObservationMode.OFF)
+        ));
+
+        ArgumentCaptor<AgentPrompt> finalPromptCaptor = ArgumentCaptor.forClass(AgentPrompt.class);
+        verify(modelClient).generateFinalReply(finalPromptCaptor.capture());
+        assertThat(finalPromptCaptor.getValue().content())
+                .contains("tool_name: mcp.filesystem.read_file")
+                .contains("status: error")
+                .contains("error_code: transport_failure");
+        assertThat(replyEnvelope.body()).isEqualTo("MCP 工具失败了，我先继续给你安全回复。");
     }
 
     /**
@@ -552,6 +705,34 @@ class DefaultAgentFacadeTest {
     }
 
     /**
+     * 构造一个最小的 MCP read_file 工具，用于验证 Agent Core 能否无差别地执行并观察外部工具。
+     */
+    private Tool createMcpBackedReadFileTool(McpClientSession session, RuntimeObservationPublisher observationPublisher) {
+        return new McpBackedTool(
+                "filesystem",
+                new McpDiscoveredTool(
+                        "read_file",
+                        "读取指定文件内容。",
+                        ToolInputSchema.object(
+                                Map.of("path", new ToolInputProperty("string", "需要读取的文件路径。")),
+                                List.of("path")
+                        ).schema()
+                ),
+                session,
+                observationPublisher
+        );
+    }
+
+    /**
+     * 合并本地工具与 MCP 工具列表，避免集成测试为了目录组合逻辑重复手写样板代码。
+     */
+    private List<Tool> combineTools(List<Tool> localTools, List<Tool> mcpTools) {
+        List<Tool> combinedTools = new ArrayList<>(localTools);
+        combinedTools.addAll(mcpTools);
+        return combinedTools;
+    }
+
+    /**
      * 为测试构造包含 memory 索引配置的集中配置对象，避免每个用例重复手写默认值。
      */
     private OpenClawProperties createProperties(Path workspaceRoot) {
@@ -561,6 +742,7 @@ class DefaultAgentFacadeTest {
                 "系统暂时繁忙，请稍后再试。",
                 new OpenClawProperties.DebugProperties("你好，介绍下你自己！"),
                 new OpenClawProperties.TelegramProperties(false, "", "", "/api/telegram/webhook", ""),
+                new OpenClawProperties.McpProperties(Duration.ofSeconds(20), Map.of()),
                 new OpenClawProperties.ObservabilityProperties(RuntimeObservationMode.TIMELINE, true, 160),
                 new OpenClawProperties.ReminderProperties(".openclaw/reminders.sqlite"),
                 new OpenClawProperties.SchedulerProperties(Duration.ofSeconds(15), 20, 3, Duration.ofMinutes(3)),
@@ -618,6 +800,88 @@ class DefaultAgentFacadeTest {
      */
     private Clock fixedClock() {
         return Clock.fixed(Instant.parse("2026-04-03T08:09:10Z"), ZoneId.of("Asia/Shanghai"));
+    }
+
+    /**
+     * 提供一个最小 MCP session 假实现，使 Agent Core 集成测试可以直接驱动成功路径而不依赖真实外部进程。
+     */
+    private static final class StubMcpClientSession implements McpClientSession {
+
+        /**
+         * 承载当前测试场景希望返回的标准化成功载荷，避免重复搭建 discovery 之外的复杂假数据结构。
+         */
+        private final Map<String, Object> payload;
+
+        /**
+         * 通过构造参数显式注入调用结果，使测试能聚焦 Agent Core 的工具闭环行为。
+         */
+        private StubMcpClientSession(Map<String, Object> payload) {
+            this.payload = payload;
+        }
+
+        /**
+         * 该测试不会在 session 内再次执行 discovery，因此这里返回空列表即可满足最小接口契约。
+         */
+        @Override
+        public List<McpDiscoveredTool> listTools() {
+            return List.of();
+        }
+
+        /**
+         * 按原样返回预设 payload，模拟 MCP 工具成功调用后的结构化结果。
+         */
+        @Override
+        public Map<String, Object> callTool(String toolName, Map<String, Object> arguments) {
+            return payload;
+        }
+
+        /**
+         * 假 session 不持有真实资源，因此关闭操作保持空实现即可。
+         */
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * 提供一个固定抛出结构化执行异常的 MCP session 假实现，用于验证 transport 失败的回填路径。
+     */
+    private static final class StubFailingMcpClientSession implements McpClientSession {
+
+        /**
+         * 承载当前测试场景希望暴露的结构化执行异常，避免把失败语义硬编码到工具适配层。
+         */
+        private final ToolExecutionException exception;
+
+        /**
+         * 通过构造参数注入异常对象，使测试可以精确声明 error code 与诊断细节。
+         */
+        private StubFailingMcpClientSession(ToolExecutionException exception) {
+            this.exception = exception;
+        }
+
+        /**
+         * 该测试只覆盖调用失败路径，因此 discovery 结果可直接返回空列表。
+         */
+        @Override
+        public List<McpDiscoveredTool> listTools() {
+            return List.of();
+        }
+
+        /**
+         * 每次调用都抛出同一个结构化执行异常，模拟远端断连或 transport 失败场景。
+         */
+        @Override
+        public Map<String, Object> callTool(String toolName, Map<String, Object> arguments) {
+            throw exception;
+        }
+
+        /**
+         * 假 session 不持有真实资源，因此关闭操作保持空实现即可。
+         */
+        @Override
+        public void close() {
+        }
     }
 
     /**
