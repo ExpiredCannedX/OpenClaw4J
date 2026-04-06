@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.tool.safety.infrastructure.sqlite;
 
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
 import com.quashy.openclaw4j.tool.safety.audit.ToolAuditLogEntry;
 import com.quashy.openclaw4j.tool.safety.confirmation.ToolConfirmationStatus;
 import com.quashy.openclaw4j.tool.safety.confirmation.ToolPendingConfirmationRecord;

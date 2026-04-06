@@ -1,16 +1,16 @@
 package com.quashy.openclaw4j.tool.builtin.reminder;
 
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
-import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
+import com.quashy.openclaw4j.conversation.NormalizedDirectMessage;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationEvent;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
-import com.quashy.openclaw4j.reminder.ReminderService;
-import com.quashy.openclaw4j.reminder.SqliteReminderRepository;
+import com.quashy.openclaw4j.reminder.application.ReminderService;
+import com.quashy.openclaw4j.reminder.infrastructure.sqlite.SqliteReminderRepository;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
 import com.quashy.openclaw4j.tool.model.ToolExecutionContext;

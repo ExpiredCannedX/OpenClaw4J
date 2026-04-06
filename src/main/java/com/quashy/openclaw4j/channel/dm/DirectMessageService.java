@@ -1,20 +1,20 @@
 package com.quashy.openclaw4j.channel.dm;
 
-import com.quashy.openclaw4j.agent.api.AgentFacade;
-import com.quashy.openclaw4j.agent.api.AgentRequest;
-import com.quashy.openclaw4j.domain.ConversationDeliveryTarget;
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
-import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
-import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.agent.application.AgentFacade;
+import com.quashy.openclaw4j.agent.application.AgentRequest;
+import com.quashy.openclaw4j.conversation.ConversationDeliveryTarget;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
+import com.quashy.openclaw4j.conversation.NormalizedDirectMessage;
+import com.quashy.openclaw4j.agent.model.ReplyEnvelope;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
-import com.quashy.openclaw4j.repository.ActiveConversationRepository;
-import com.quashy.openclaw4j.repository.ConversationDeliveryTargetRepository;
-import com.quashy.openclaw4j.repository.IdentityMappingRepository;
-import com.quashy.openclaw4j.repository.ProcessedMessageRepository;
+import com.quashy.openclaw4j.conversation.port.ActiveConversationRepository;
+import com.quashy.openclaw4j.conversation.port.ConversationDeliveryTargetRepository;
+import com.quashy.openclaw4j.conversation.port.IdentityMappingRepository;
+import com.quashy.openclaw4j.conversation.port.ProcessedMessageRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;

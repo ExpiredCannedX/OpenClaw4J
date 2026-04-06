@@ -1,19 +1,19 @@
 package com.quashy.openclaw4j.channel.telegram;
 
-import com.quashy.openclaw4j.agent.api.AgentFacade;
-import com.quashy.openclaw4j.agent.api.AgentRequest;
+import com.quashy.openclaw4j.agent.application.AgentFacade;
+import com.quashy.openclaw4j.agent.application.AgentRequest;
 import com.quashy.openclaw4j.channel.dm.DirectMessageService;
-import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.agent.model.ReplyEnvelope;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationEvent;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
-import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryConversationDeliveryTargetRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryActiveConversationRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryConversationDeliveryTargetRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryIdentityMappingRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryProcessedMessageRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 

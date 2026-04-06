@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.tool.builtin.reminder;
 
-import com.quashy.openclaw4j.reminder.ReminderRecord;
-import com.quashy.openclaw4j.reminder.ReminderService;
+import com.quashy.openclaw4j.reminder.model.ReminderRecord;
+import com.quashy.openclaw4j.reminder.application.ReminderService;
 import com.quashy.openclaw4j.tool.api.Tool;
 import com.quashy.openclaw4j.tool.model.ToolArgumentException;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;

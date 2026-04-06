@@ -5,6 +5,7 @@ import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
 import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.channel.telegram.TelegramOutboundClient;
 import com.quashy.openclaw4j.channel.telegram.TelegramOutboundMessage;
+import com.quashy.openclaw4j.reminder.schedule.ReminderHeartbeatScheduler;
 import com.quashy.openclaw4j.tool.api.ToolRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

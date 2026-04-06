@@ -1,8 +1,8 @@
 package com.quashy.openclaw4j.tool.model;
 
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
-import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
+import com.quashy.openclaw4j.conversation.NormalizedDirectMessage;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 
 import java.nio.file.Path;

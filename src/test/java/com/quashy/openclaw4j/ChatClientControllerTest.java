@@ -3,6 +3,7 @@ package com.quashy.openclaw4j;
 import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 import com.quashy.openclaw4j.config.OpenClawProperties;
+import com.quashy.openclaw4j.debug.ChatClientController;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationMode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

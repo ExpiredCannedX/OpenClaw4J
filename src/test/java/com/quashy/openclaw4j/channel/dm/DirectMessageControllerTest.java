@@ -12,11 +12,11 @@ import com.quashy.openclaw4j.observability.runtime.DefaultRuntimeObservationPubl
 import com.quashy.openclaw4j.observability.sink.NoopRuntimeObservationSink;
 import com.quashy.openclaw4j.skill.SkillMarkdownParser;
 import com.quashy.openclaw4j.skill.SkillResolver;
-import com.quashy.openclaw4j.store.memory.InMemoryActiveConversationRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryConversationDeliveryTargetRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryConversationTurnRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryIdentityMappingRepository;
-import com.quashy.openclaw4j.store.memory.InMemoryProcessedMessageRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryActiveConversationRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryConversationDeliveryTargetRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryConversationTurnRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryIdentityMappingRepository;
+import com.quashy.openclaw4j.conversation.infrastructure.memory.InMemoryProcessedMessageRepository;
 import com.quashy.openclaw4j.tool.runtime.DefaultToolExecutor;
 import com.quashy.openclaw4j.tool.runtime.LocalToolRegistry;
 import com.quashy.openclaw4j.tool.api.Tool;

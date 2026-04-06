@@ -1,22 +1,22 @@
 package com.quashy.openclaw4j.agent.runtime;
 
-import com.quashy.openclaw4j.agent.api.AgentFacade;
-import com.quashy.openclaw4j.agent.api.AgentRequest;
+import com.quashy.openclaw4j.agent.application.AgentFacade;
+import com.quashy.openclaw4j.agent.application.AgentRequest;
 import com.quashy.openclaw4j.agent.decision.AgentModelDecision;
 import com.quashy.openclaw4j.agent.decision.FinalReplyDecision;
 import com.quashy.openclaw4j.agent.decision.ToolCallDecision;
 import com.quashy.openclaw4j.agent.port.AgentModelClient;
 import com.quashy.openclaw4j.agent.prompt.AgentPromptAssembler;
 import com.quashy.openclaw4j.config.OpenClawProperties;
-import com.quashy.openclaw4j.domain.ConversationTurn;
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.ReplyEnvelope;
-import com.quashy.openclaw4j.domain.ReplySignal;
+import com.quashy.openclaw4j.conversation.ConversationTurn;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.agent.model.ReplyEnvelope;
+import com.quashy.openclaw4j.agent.model.ReplySignal;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
-import com.quashy.openclaw4j.repository.ConversationTurnRepository;
+import com.quashy.openclaw4j.conversation.port.ConversationTurnRepository;
 import com.quashy.openclaw4j.skill.ResolvedSkill;
 import com.quashy.openclaw4j.skill.SkillResolver;
 import com.quashy.openclaw4j.tool.model.ToolCallRequest;
@@ -41,63 +41,62 @@ import java.util.Optional;
 import java.nio.file.Path;
 
 /**
- * 提供当前 change 所需的 Agent 主链路实现，负责 workspace 加载、有界多步编排、模型调用和失败兜底。
- */
+ * 提供当前 change 所需�?Agent 主链路实现，负责 workspace 加载、有界多步编排、模型调用和失败兜底�? */
 @Service
 public class DefaultAgentFacade implements AgentFacade {
 
     /**
-     * 负责读取本次推理需要的 workspace 快照，隔离文件系统细节。
+     * 负责读取本次推理需要的 workspace 快照，隔离文件系统细节�?
      */
     private final WorkspaceLoader workspaceLoader;
 
     /**
-     * 负责把 workspace 与 recent turns 组装成稳定提示词，避免主流程掺杂格式细节。
+     * 负责�?workspace �?recent turns 组装成稳定提示词，避免主流程掺杂格式细节�?
      */
     private final AgentPromptAssembler promptAssembler;
 
     /**
-     * 负责根据本地 Skill 文档与当前消息解析至多一个可安全注入的 Skill。
+     * 负责根据本地 Skill 文档与当前消息解析至多一个可安全注入�?Skill�?
      */
     private final SkillResolver skillResolver;
 
     /**
-     * 保存和读取最近会话轮次，支撑单聊多轮上下文连续。
+     * 保存和读取最近会话轮次，支撑单聊多轮上下文连续�?
      */
     private final ConversationTurnRepository conversationTurnRepository;
 
     /**
-     * 统一封装底层模型调用，使主链路可以独立于具体模型 SDK 测试和演进。
+     * 统一封装底层模型调用，使主链路可以独立于具体模型 SDK 测试和演进�?
      */
     private final AgentModelClient agentModelClient;
 
     /**
-     * 暴露当前请求可见的工具目录，供规划阶段 prompt 组装与工具按名解析使用。
+     * 暴露当前请求可见的工具目录，供规划阶�?prompt 组装与工具按名解析使用�?
      */
     private final ToolRegistry toolRegistry;
 
     /**
-     * 负责执行一次同步工具调用并统一收敛执行结果，避免主链路处理工具异常细节。
+     * 负责执行一次同步工具调用并统一收敛执行结果，避免主链路处理工具异常细节�?
      */
     private final ToolExecutor toolExecutor;
 
     /**
-     * 提供 workspace 路径、recent turn 数量和失败兜底文案等当前阶段必须配置。
+     * 提供 workspace 路径、recent turn 数量和失败兜底文案等当前阶段必须配置�?
      */
     private final OpenClawProperties properties;
 
     /**
-     * 负责在 Agent Core 稳定边界发布结构化运行事件，避免主链路直接依赖具体 sink 细节。
+     * 负责�?Agent Core 稳定边界发布结构化运行事件，避免主链路直接依赖具�?sink 细节�?
      */
     private final RuntimeObservationPublisher runtimeObservationPublisher;
 
     /**
-     * 负责解析显式确认消息并在命中待确认请求时短路恢复执行；为空时回退为既有常规规划路径。
+     * 负责解析显式确认消息并在命中待确认请求时短路恢复执行；为空时回退为既有常规规划路径�?
      */
     private final ToolConfirmationService toolConfirmationService;
 
     /**
-     * 通过显式依赖注入固定主链路边界，让渠道层与存储层都不需要知道模型调用和上下文组装的细节。
+     * 通过显式依赖注入固定主链路边界，让渠道层与存储层都不需要知道模型调用和上下文组装的细节�?
      */
     public DefaultAgentFacade(
             WorkspaceLoader workspaceLoader,
@@ -125,7 +124,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 通过显式依赖注入固定主链路和确认短路恢复边界，使高风险工具确认不会重新暴露给模型自由规划。
+     * 通过显式依赖注入固定主链路和确认短路恢复边界，使高风险工具确认不会重新暴露给模型自由规划�?
      */
     @Autowired
     public DefaultAgentFacade(
@@ -153,8 +152,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 执行一次完整的单聊推理流程，并在“直接回复”与“有界多步工具编排”之间进行 request-local 闭环。
-     */
+     * 执行一次完整的单聊推理流程，并在“直接回复”与“有界多步工具编排”之间进�?request-local 闭环�?     */
     @Override
     public ReplyEnvelope reply(AgentRequest request) {
         TraceContext traceContext = resolveTraceContext(request);
@@ -169,7 +167,7 @@ public class DefaultAgentFacade implements AgentFacade {
 
         String failureStage = "workspace_load";
         try {
-            // 加载 workspace/ 目录下的所有静态知识，包括规则 (SOUL.md, USER.md 等)、记忆 (memory/) 和技能定义 (skills/)，形成一个“世界知识”快照。
+            // 加载 workspace/ 目录下的所有静态知识，包括规则 (SOUL.md, USER.md �?、记�?(memory/) 和技能定�?(skills/)，形成一个“世界知识”快照�?
             WorkspaceSnapshot workspaceSnapshot = workspaceLoader.load();
 
             runtimeObservationPublisher.emit(
@@ -186,7 +184,7 @@ public class DefaultAgentFacade implements AgentFacade {
             );
 
             failureStage = "skill_resolve";
-            // 根据用户当前的消息，判断是否命中了某个在 skills/ 目录中定义的特定技能，以便在思考时使用专门的指令。
+            // 根据用户当前的消息，判断是否命中了某个在 skills/ 目录中定义的特定技能，以便在思考时使用专门的指令�?
             Optional<ResolvedSkill> selectedSkill = skillResolver.resolve(
                     request.message().body(),
                     workspaceSnapshot.localSkillDocuments()
@@ -201,7 +199,7 @@ public class DefaultAgentFacade implements AgentFacade {
             );
 
             failureStage = "recent_turns_load";
-            // 从数据库或内存中读取当前对话的最近几轮交流，作为短期记忆。
+            // 从数据库或内存中读取当前对话的最近几轮交流，作为短期记忆�?
             List<ConversationTurn> recentTurns = conversationTurnRepository.loadRecentTurns(request.conversationId(), properties.recentTurnLimit());
             runtimeObservationPublisher.emit(
                     traceContext,
@@ -303,8 +301,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在每一轮 planning 前统一组装带预算与观察历史的 prompt，并为 step 级调试输出稳定的模型决策事件。
-     */
+     * 在每一�?planning 前统一组装带预算与观察历史�?prompt，并�?step 级调试输出稳定的模型决策事件�?     */
     private AgentModelDecision decideNextAction(
             WorkspaceSnapshot workspaceSnapshot,
             Optional<ResolvedSkill> selectedSkill,
@@ -345,8 +342,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 执行单个工具 step，并把 step 序号与执行结果一并写入运行时观测，确保后续排障能精确定位每一轮动作。
-     */
+     * 执行单个工具 step，并�?step 序号与执行结果一并写入运行时观测，确保后续排障能精确定位每一轮动作�?     */
     private ToolExecutionResult executeToolStep(
             ToolCallRequest toolCallRequest,
             TraceContext traceContext,
@@ -374,8 +370,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 根据本次工具观察推进编排状态，并在确认态或预算耗尽时立即标记硬终止原因。
-     */
+     * 根据本次工具观察推进编排状态，并在确认态或预算耗尽时立即标记硬终止原因�?     */
     private AgentOrchestrationState advanceStateAfterObservation(
             AgentOrchestrationState orchestrationState,
             ToolExecutionResult observation
@@ -391,8 +386,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在编排循环结束后统一选择“直接复用 planning final reply”或“基于累计观察再生成最终回复”的收敛路径。
-     */
+     * 在编排循环结束后统一选择“直接复�?planning final reply”或“基于累计观察再生成最终回复”的收敛路径�?     */
     private String resolveReplyBody(
             WorkspaceSnapshot workspaceSnapshot,
             Optional<ResolvedSkill> selectedSkill,
@@ -420,8 +414,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在终止点统一发布编排结束事件，使 step budget、终止原因和累计观察数量都能进入运行时时间线。
-     */
+     * 在终止点统一发布编排结束事件，使 step budget、终止原因和累计观察数量都能进入运行时时间线�?     */
     private void emitOrchestrationTerminated(TraceContext traceContext, AgentOrchestrationState orchestrationState) {
         runtimeObservationPublisher.emit(
                 traceContext,
@@ -440,8 +433,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在真正生成用户可见最终回复前发布统一起始事件，确保 direct reply 与 observation-backed reply 共享同一观测边界。
-     */
+     * 在真正生成用户可见最终回复前发布统一起始事件，确�?direct reply �?observation-backed reply 共享同一观测边界�?     */
     private void emitFinalReplyStarted(TraceContext traceContext, AgentOrchestrationState orchestrationState) {
         runtimeObservationPublisher.emit(
                 traceContext,
@@ -454,8 +446,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在最终回复正文产生后统一输出 step 级摘要与可选预览，避免不同收敛路径分叉出不同的观测格式。
-     */
+     * 在最终回复正文产生后统一输出 step 级摘要与可选预览，避免不同收敛路径分叉出不同的观测格式�?     */
     private void emitFinalReplyCompleted(
             TraceContext traceContext,
             AgentOrchestrationState orchestrationState,
@@ -476,8 +467,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在显式确认服务存在时解析当前消息是否命中待确认请求；未命中时返回空值以继续常规规划路径。
-     */
+     * 在显式确认服务存在时解析当前消息是否命中待确认请求；未命中时返回空值以继续常规规划路径�?     */
     private ToolConfirmationResolution resolveConfirmedToolRequest(AgentRequest request, TraceContext traceContext) {
         if (toolConfirmationService == null) {
             return null;
@@ -490,8 +480,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 把显式确认解析失败收敛为结构化错误观察，保证确认拒绝路径也能沿用统一的最终回复 prompt 契约。
-     */
+     * 把显式确认解析失败收敛为结构化错误观察，保证确认拒绝路径也能沿用统一的最终回�?prompt 契约�?     */
     private ToolExecutionError buildRejectedConfirmationObservation(ToolConfirmationResolution resolution) {
         return new ToolExecutionError(
                 resolution.pendingRecord() == null ? "tool.confirmation" : resolution.pendingRecord().toolName(),
@@ -502,16 +491,14 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 判断本次工具观察是否命中了必须等待用户下一条消息的确认边界，避免系统在同一请求内继续越过安全暂停点。
-     */
+     * 判断本次工具观察是否命中了必须等待用户下一条消息的确认边界，避免系统在同一请求内继续越过安全暂停点�?     */
     private boolean isConfirmationRequiredObservation(ToolExecutionResult observation) {
         return observation instanceof ToolExecutionError error
                 && "confirmation_required".equals(error.errorCode());
     }
 
     /**
-     * 把 step budget 与终止元数据统一并入事件摘要，避免每个调用点重复拼接并导致字段漂移。
-     */
+     * �?step budget 与终止元数据统一并入事件摘要，避免每个调用点重复拼接并导致字段漂移�?     */
     private Map<String, Object> withOrchestrationContext(
             Map<String, Object> payload,
             AgentOrchestrationState orchestrationState
@@ -527,7 +514,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 只在本次请求确实命中 Skill 且成功完成时生成结构化 signal，避免把系统语义混入正文。
+     * 只在本次请求确实命中 Skill 且成功完成时生成结构�?signal，避免把系统语义混入正文�?
      */
     private List<ReplySignal> buildSignals(Optional<ResolvedSkill> selectedSkill) {
         return selectedSkill
@@ -542,7 +529,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 根据模型决策选择直接回复或一次工具调用闭环，把最终回复正文统一收敛成一个字符串结果。
+     * 根据模型决策选择直接回复或一次工具调用闭环，把最终回复正文统一收敛成一个字符串结果�?
      */
     private ReplyEnvelope buildReplyEnvelope(
             InternalConversationId conversationId,
@@ -567,7 +554,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 统一落盘并返回兜底回复，确保所有失败路径对渠道层都保持相同协议。
+     * 统一落盘并返回兜底回复，确保所有失败路径对渠道层都保持相同协议�?
      */
     private ReplyEnvelope fallbackReply(InternalConversationId conversationId, TraceContext traceContext, String reason) {
         conversationTurnRepository.appendTurn(conversationId, ConversationTurn.assistant(properties.fallbackReply()));
@@ -583,7 +570,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 在渠道层未显式传入 trace 时按当前消息创建兜底上下文，并补齐内部会话标识。
+     * 在渠道层未显式传�?trace 时按当前消息创建兜底上下文，并补齐内部会话标识�?
      */
     private TraceContext resolveTraceContext(AgentRequest request) {
         TraceContext traceContext = request.traceContext() != null
@@ -597,7 +584,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 为 Skill 解析事件构造摘要负载，确保时间线能明确显示是否命中以及命中的 Skill 名称。
+     * �?Skill 解析事件构造摘要负载，确保时间线能明确显示是否命中以及命中�?Skill 名称�?
      */
     private Map<String, Object> buildSkillPayload(Optional<ResolvedSkill> selectedSkill) {
         if (selectedSkill.isEmpty()) {
@@ -611,7 +598,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 为模型决策事件构造摘要负载，使时间线能直接看出是最终回复还是工具调用。
+     * 为模型决策事件构造摘要负载，使时间线能直接看出是最终回复还是工具调用�?
      */
     private Map<String, Object> buildDecisionPayload(AgentModelDecision decision) {
         if (decision instanceof FinalReplyDecision) {
@@ -625,7 +612,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 为工具观察结果构造摘要字段，避免默认时间线直接暴露完整 payload 结构。
+     * 为工具观察结果构造摘要字段，避免默认时间线直接暴露完�?payload 结构�?
      */
     private Map<String, Object> buildToolObservationPayload(ToolExecutionResult observation) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -640,7 +627,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 仅在详细模式下提供工具结果预览，避免默认模式直接打印完整工具输出。
+     * 仅在详细模式下提供工具结果预览，避免默认模式直接打印完整工具输出�?
      */
     private Map<String, Object> buildToolObservationVerbosePayload(ToolExecutionResult observation) {
         if (observation instanceof com.quashy.openclaw4j.tool.model.ToolExecutionSuccess success) {
@@ -651,7 +638,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 仅在详细模式下暴露回复预览，帮助排障时查看模型输出而不污染默认时间线。
+     * 仅在详细模式下暴露回复预览，帮助排障时查看模型输出而不污染默认时间线�?
      */
     private Map<String, Object> buildReplyVerbosePayload(String replyBody) {
         if (!StringUtils.hasText(replyBody)) {
@@ -661,7 +648,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 把异常的可选文本放入详细负载，避免默认时间线模式直接输出过长的堆栈或错误文案。
+     * 把异常的可选文本放入详细负载，避免默认时间线模式直接输出过长的堆栈或错误文案�?
      */
     private Map<String, Object> buildExceptionVerbosePayload(Exception exception) {
         if (!StringUtils.hasText(exception.getMessage())) {
@@ -671,7 +658,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 为本次工具调用构造显式执行上下文，使工具能够读取身份、会话、消息来源、trace 和 workspace 根路径等系统事实。
+     * 为本次工具调用构造显式执行上下文，使工具能够读取身份、会话、消息来源、trace �?workspace 根路径等系统事实�?
      */
     private ToolExecutionContext buildToolExecutionContext(AgentRequest request, TraceContext traceContext) {
         return new ToolExecutionContext(
@@ -684,8 +671,7 @@ public class DefaultAgentFacade implements AgentFacade {
     }
 
     /**
-     * 统一把累计工具观察结果回填到最终回复阶段，使常规多步工具调用与确认恢复执行共享同一收敛契约。
-     */
+     * 统一把累计工具观察结果回填到最终回复阶段，使常规多步工具调用与确认恢复执行共享同一收敛契约�?     */
     private String generateFinalReplyFromObservations(
             WorkspaceSnapshot workspaceSnapshot,
             Optional<ResolvedSkill> selectedSkill,

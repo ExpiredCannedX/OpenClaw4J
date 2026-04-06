@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.tool.safety.confirmation;
 
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
 import com.quashy.openclaw4j.tool.safety.model.ToolArgumentValidatorType;
 import com.quashy.openclaw4j.tool.safety.model.ToolConfirmationPolicy;
 import com.quashy.openclaw4j.tool.safety.model.ToolRiskLevel;

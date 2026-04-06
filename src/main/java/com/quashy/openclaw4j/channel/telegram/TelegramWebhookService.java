@@ -3,7 +3,7 @@ package com.quashy.openclaw4j.channel.telegram;
 import com.quashy.openclaw4j.channel.dm.DirectMessageIngressCommand;
 import com.quashy.openclaw4j.channel.dm.DirectMessageHandleResult;
 import com.quashy.openclaw4j.channel.dm.DirectMessageService;
-import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.agent.model.ReplyEnvelope;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationLevel;
 import com.quashy.openclaw4j.observability.model.RuntimeObservationPhase;
 import com.quashy.openclaw4j.observability.model.TraceContext;

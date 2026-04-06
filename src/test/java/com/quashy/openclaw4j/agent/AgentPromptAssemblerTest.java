@@ -2,7 +2,7 @@ package com.quashy.openclaw4j.agent;
 
 import com.quashy.openclaw4j.agent.prompt.AgentPrompt;
 import com.quashy.openclaw4j.agent.prompt.AgentPromptAssembler;
-import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.conversation.NormalizedDirectMessage;
 import com.quashy.openclaw4j.tool.schema.ToolDefinition;
 import com.quashy.openclaw4j.tool.schema.ToolInputSchema;
 import com.quashy.openclaw4j.workspace.WorkspaceFileContent;

@@ -1,6 +1,6 @@
 package com.quashy.openclaw4j.channel.dm;
 
-import com.quashy.openclaw4j.domain.ReplyEnvelope;
+import com.quashy.openclaw4j.agent.model.ReplyEnvelope;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;

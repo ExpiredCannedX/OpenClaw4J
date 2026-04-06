@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.tool.safety.audit;
 
-import com.quashy.openclaw4j.domain.InternalConversationId;
-import com.quashy.openclaw4j.domain.InternalUserId;
+import com.quashy.openclaw4j.conversation.InternalConversationId;
+import com.quashy.openclaw4j.conversation.InternalUserId;
 import org.springframework.util.Assert;
 
 import java.time.Instant;

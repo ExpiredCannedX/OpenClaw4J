@@ -1,7 +1,7 @@
 package com.quashy.openclaw4j.memory;
 
 import com.quashy.openclaw4j.config.OpenClawProperties;
-import com.quashy.openclaw4j.domain.NormalizedDirectMessage;
+import com.quashy.openclaw4j.conversation.NormalizedDirectMessage;
 import com.quashy.openclaw4j.observability.port.RuntimeObservationPublisher;
 import com.quashy.openclaw4j.tool.model.ToolExecutionContext;
 import org.springframework.boot.ApplicationArguments;
