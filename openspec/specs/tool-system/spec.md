@@ -21,15 +21,30 @@ The system SHALL provide a registry that lists registered tools from all enabled
 - **WHEN** two tool implementations from any source attempt to expose the same internal unique tool name
 - **THEN** the system rejects the duplicate registration instead of exposing an ambiguous tool catalog
 
-### Requirement: System executes synchronous tools with structured outcomes
-The system SHALL execute registered local and MCP-backed tools synchronously and return a structured outcome that is either a success result or an error result, rather than propagating raw tool exceptions or raw MCP client failures to callers.
+### Requirement: System associates each tool with server-side safety metadata
+The system SHALL associate every registered local or MCP-backed tool with server-side safety metadata that is available to the unified policy layer. This metadata SHALL include a stable risk classification and MAY include confirmation and argument-validation directives, but it SHALL NOT require those fields to appear in the model-visible tool catalog.
 
-#### Scenario: Successful tool execution returns structured success
-- **WHEN** a registered local or MCP-backed tool completes successfully
+#### Scenario: Local tool exposes safety metadata to policy layer
+- **WHEN** a local tool is registered in the combined tool registry
+- **THEN** the system makes that tool's server-side safety metadata available to the policy layer together with the tool implementation
+
+#### Scenario: MCP-backed tool exposes mapped safety metadata to policy layer
+- **WHEN** a discovered MCP-backed tool is registered in the combined tool registry
+- **THEN** the system makes a server-side safety profile available for that tool before execution can occur
+
+### Requirement: System executes synchronous tools with structured outcomes
+The system SHALL evaluate every registered local and MCP-backed tool call through the unified safety policy before real synchronous execution, and it SHALL return a structured outcome that is either a success result or an error result rather than propagating raw tool exceptions, raw MCP client failures, or raw policy failures to callers.
+
+#### Scenario: Allowed tool execution returns structured success
+- **WHEN** a registered local or MCP-backed tool request is allowed by the safety policy and the tool completes successfully
 - **THEN** the executor returns a structured success outcome containing the tool name and normalized result payload
 
-#### Scenario: Failed tool execution returns structured error
-- **WHEN** a registered local or MCP-backed tool throws, reports invalid arguments, times out, or cannot complete due to MCP transport failure
+#### Scenario: Policy denial or confirmation requirement returns structured error
+- **WHEN** a registered local or MCP-backed tool request is denied by policy or requires explicit confirmation before execution
+- **THEN** the executor returns a structured error outcome containing the tool name and the policy result details without executing the real tool
+
+#### Scenario: Allowed tool execution failure returns structured error
+- **WHEN** a registered local or MCP-backed tool request is allowed by policy but later throws, reports invalid arguments, times out, or cannot complete due to MCP transport failure
 - **THEN** the executor returns a structured error outcome containing the tool name and error details
 
 ### Requirement: System provides a built-in time tool

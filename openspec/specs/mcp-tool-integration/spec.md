@@ -38,12 +38,16 @@ The system SHALL preserve each discovered MCP tool input schema as a normalized 
 - **THEN** the exposed internal tool definition retains those schema structures instead of flattening them into a lossy simplified model
 
 ### Requirement: System invokes discovered MCP tools through the unified synchronous tool contract
-The system SHALL invoke discovered MCP tools synchronously through the initialized MCP session and SHALL convert invocation outcomes into the same structured success/error result model used by local tools.
+The system SHALL invoke discovered MCP tools synchronously through the initialized MCP session only after the unified safety policy allows the request, and it SHALL convert allowed, denied, or failed invocation outcomes into the same structured success/error result model used by local tools. Filesystem write-capable MCP tools SHALL also pass argument-level safety validation before any MCP transport call is sent.
 
-#### Scenario: Successful MCP tool invocation returns structured success
-- **WHEN** Agent Core invokes a discovered MCP tool and the MCP server returns a successful result payload
+#### Scenario: Allowed MCP tool invocation returns structured success
+- **WHEN** Agent Core invokes a discovered MCP tool, the unified safety policy allows the request, and the MCP server returns a successful result payload
 - **THEN** the system returns a structured tool success outcome containing the internal tool name and normalized payload
 
+#### Scenario: Unsafe filesystem write request is blocked before transport
+- **WHEN** Agent Core invokes a discovered filesystem write-capable MCP tool with arguments that violate workspace-root or sensitive-path policy
+- **THEN** the system returns a structured tool error outcome without sending the request to the MCP session
+
 #### Scenario: MCP invocation timeout or transport failure returns structured error
-- **WHEN** Agent Core invokes a discovered MCP tool and the MCP session times out, disconnects, or otherwise cannot complete the request
+- **WHEN** Agent Core invokes a discovered MCP tool, the request has already passed policy checks, and the MCP session times out, disconnects, or otherwise cannot complete the request
 - **THEN** the system returns a structured tool error outcome instead of propagating the raw MCP client failure
