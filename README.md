@@ -555,6 +555,76 @@ ToolConfirmationService.resolveExplicitConfirmation(...)
           `- 恢复原 ToolCallRequest -> executeToolStep(...)
              -> 再次经过 ToolPolicyGuard（应命中已确认）-> 执行工具 -> markConsumed
 ```
+## 可观测设计
+
+1) 设计目标
+- 不替代业务日志，而是给「单次运行(run)」提供可串联的结构化时间线。
+- 重点支持联调场景：能从 ingress 一路看到 agent/tool/outbound。
+
+2) 核心抽象（生产与消费解耦）
+- 业务侧只依赖: `RuntimeObservationPublisher`
+  - `createTrace(...)`
+  - `emit(...)`
+- 输出侧只依赖: `RuntimeObservationSink`
+  - `ConsoleRuntimeObservationSink / Noop / Composite`
+
+3) 统一数据模型
+- `TraceContext:
+  runId, channel, externalConversationId, externalMessageId, internalConversationId, mode`
+- `RuntimeObservationEvent:
+  timestamp, eventType, phase, level, component, traceContext, payload, verbosePayload`
+
+4) 模式治理（进程级）
+- OFF: 不输出
+- ERRORS: 只输出 WARN/ERROR（INFO 被过滤）
+- TIMELINE: 全时间线，只保留摘要 payload（默认推荐）
+- VERBOSE: 在时间线基础上合并「截断后的 verbose 字段」
+
+5) 安全与噪音控制
+- verbosePreviewLength 统一截断长字符串，避免把完整上下文直接打出来。
+- sink 展示的是「已裁剪后的 payload」，不是原始大对象。
+
+```tex
+====================== 可观测主链路（端到端） ======================
+
+[Spring 装配期]
+RuntimeObservabilityConfiguration
+   |
+   +--> runtimeObservationSink(...)
+   |      |- console-enabled=true  -> ConsoleRuntimeObservationSink
+   |      |- 多 sink               -> CompositeRuntimeObservationSink
+   |      `- 无 sink               -> NoopRuntimeObservationSink
+   |
+   `--> runtimeObservationPublisher(...)
+          -> DefaultRuntimeObservationPublisher(mode, previewLength, sink, clock)
+
+[请求运行期]
+业务边界（Telegram/DirectMessage/Agent/Tool/Reminder...）
+   |
+   +--> createTrace(channel, externalConversationId, externalMessageId)
+   |      -> 生成 runId，后续事件共享同一个 trace
+   |
+   `--> emit(trace, eventType, phase, level, component, payload, verbosePayload)
+          |
+          +--> shouldEmit(mode, level)
+          |      |- OFF -> 丢弃
+          |      |- ERRORS + INFO -> 丢弃
+          |      `- 其余 -> 继续
+          |
+          +--> mode == VERBOSE ?
+          |      |- 是: sanitizeVerbosePayload + truncate
+          |      `- 否: 仅摘要 payload
+          |
+          +--> 组装 RuntimeObservationEvent(timestamp + trace + payload)
+          |
+          `--> sink.emit(event)
+                 |
+                 `--> Console sink 单行输出:
+                     [run:<runId>][<level>][<phase>][<component>] <eventType + kv...>
+
+```
+
+
 ## 渠道与回复模型
 
 当前系统的消息模型以单聊为核心。
