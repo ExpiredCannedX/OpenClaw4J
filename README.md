@@ -1,5 +1,20 @@
 # OpenClaw4J
 
+<p align="center">
+  <img src="logo.png" alt="OpenClaw4J Logo" width="60%">
+</p>
+
+
+<p align="center">
+    <img src="https://img.shields.io/badge/JDK-25-007396" alt="JDK 25">
+    <img src="https://img.shields.io/badge/Spring%20Boot-3.5.13-6DB33F" alt="Spring Boot 3.5.13">
+    <img src="https://img.shields.io/badge/Spring%20AI-1.1.2-6DB33F" alt="Spring AI 1.1.2">
+    <img src="https://img.shields.io/badge/SQLite-3.51%2B-003B57" alt="SQLite 3.51+">
+    <img src="https://img.shields.io/badge/MCP-0.6.0-111827" alt="MCP 0.6.0">
+    <img src="https://img.shields.io/badge/Telegram-DM%20Adapter-26A5E4" alt="Telegram DM Adapter">
+    <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License MIT">
+    <img src="https://img.shields.io/badge/Build-Maven-C71A36" alt="Build Maven">
+</p>
 OpenClaw4J 是一个本地优先、文件驱动、面向单聊场景的 Java Agent 内核。
 
 它把人格、规则、Skill、长期记忆和工具边界沉淀在本地 workspace 中，而不是把状态完全压进模型上下文。当前版本已经具备统一单聊入口、多步同步工具编排、本地记忆检索与写入、一次性提醒调度、Telegram 私聊适配、MCP 工具接入以及服务端工具安全治理能力。
