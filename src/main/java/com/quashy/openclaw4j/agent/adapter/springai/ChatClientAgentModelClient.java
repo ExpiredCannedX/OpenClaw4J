@@ -69,7 +69,7 @@ public class ChatClientAgentModelClient implements AgentModelClient {
                 case "final_reply" -> new FinalReplyDecision(readRequiredText(root, "reply"));
                 case "tool_call" -> new ToolCallDecision(
                         readRequiredText(root, "toolName"),
-                        readArguments(root.path("arguments"))
+                        readRequiredArguments(root, "arguments")
                 );
                 default -> throw new IllegalStateException("未知模型决策类型: " + decisionType);
             };
@@ -106,11 +106,12 @@ public class ChatClientAgentModelClient implements AgentModelClient {
     }
 
     /**
-     * 把 arguments 节点转换成普通 Map，允许无参工具省略该字段但拒绝非对象结构。
+     * 读取 tool_call 的 arguments 对象并强制其存在，避免缺参调用被静默降级为空参数继续进入执行链路。
      */
-    private Map<String, Object> readArguments(JsonNode argumentsNode) {
+    private Map<String, Object> readRequiredArguments(JsonNode root, String fieldName) {
+        JsonNode argumentsNode = root.path(fieldName);
         if (argumentsNode.isMissingNode() || argumentsNode.isNull()) {
-            return Map.of();
+            throw new IllegalStateException("模型工具调用缺少有效字段: " + fieldName);
         }
         if (!argumentsNode.isObject()) {
             throw new IllegalStateException("模型工具参数必须是 JSON 对象。");

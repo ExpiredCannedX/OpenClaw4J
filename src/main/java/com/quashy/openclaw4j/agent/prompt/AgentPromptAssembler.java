@@ -237,7 +237,8 @@ public class AgentPromptAssembler {
         builder.append("【决策输出要求】\n");
         builder.append("请只输出一个 JSON 对象，不要输出 Markdown 代码块或额外解释。\n");
         builder.append("若已足够直接回答用户，请输出：{\"type\":\"final_reply\",\"reply\":\"...\"}\n");
-        builder.append("若需要调用一个工具，请输出：{\"type\":\"tool_call\",\"toolName\":\"工具名\",\"arguments\":{}}\n");
+        builder.append("若需要调用一个工具，请输出：{\"type\":\"tool_call\",\"toolName\":\"工具名\",\"arguments\":{\"参数名\":\"参数值\"}}\n");
+        builder.append("arguments 必须是 JSON 对象，且必须满足该工具 input_schema.required 中声明的必填字段，禁止使用空对象占位。\n");
         builder.append("本次请求允许在剩余 step budget 内继续同步工具闭环，但每一步仍只能输出一个下一步动作。\n");
     }
 

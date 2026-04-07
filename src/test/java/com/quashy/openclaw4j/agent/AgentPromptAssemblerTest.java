@@ -53,6 +53,7 @@ class AgentPromptAssemblerTest {
                 .contains("\"tags\"")
                 .contains("\"items\"")
                 .contains("\"enum\"")
+                .contains("arguments 必须是 JSON 对象")
                 .contains("summary")
                 .contains("full");
     }
