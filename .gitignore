@@ -24,6 +24,9 @@ replay_pid*
 # Local workspace runtime data
 workspace/
 
+# Keep OpenSpec stable specs public; keep change history local/private
+/openspec/changes/
+
 # Local environment files
 .env
 .env.*
